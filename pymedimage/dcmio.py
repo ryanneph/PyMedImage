@@ -11,8 +11,15 @@ import pickle
 import dicom # pydicom
 import numpy as np
 from utils.imvector import imvector
-from utils import features as features, logging as logging
+from utils import features as features
+from utils.logging import print_indent
 from string import Template
+
+
+# global indent settings
+g_indents = {1: 0,
+             2: 2,
+             3: 4 }
 
 def write_dicom(path, dataset):
     """write a pydicom dataset to dicom file"""
@@ -42,12 +49,14 @@ def read_dicom_dir(path, recursive=False, verbose=0):
         print('Execution Terminated. Supplied path did not exist: {:s}'.format(path))
         sys.exit(1)
     else:
+        l1_indent = g_indents[2]
+        l2_indent = g_indents[3]
         printstring = Template('Reading dicoms in specified path$extra:\n"{:s}"')
         extra = ''
         if recursive:
             extra = ' and subdirs'
         printstring = printstring.substitute(extra=extra).format(path)
-        print(printstring + '\n')
+        print_indent(printstring, l1_indent)
         for root, dirs, files in os.walk(path, topdown=True):
             # build the list of valid dicom file paths then load them after walk
             for file in files:
@@ -61,13 +70,13 @@ def read_dicom_dir(path, recursive=False, verbose=0):
         # Now read the dicom files that were located within path
         if verbose == 1:
             #low verbosity
-            print(dicom_paths[:5])
+            print_indent(dicom_paths[:5],l2_indent)
         elif verbose == 2:
             #high verbosity
-            print(dicom_paths[:20])
+            print_indent(dicom_paths[:20],l2_indent)
         elif verbose > 2:
             #full verbosity
-            print(dicom_paths)
+            print_indent(dicom_paths,l2_indent)
 
         if (len(dicom_paths)>0):
             for file in dicom_paths:
@@ -87,15 +96,18 @@ def build_dataset(dataset_list):
         The x-axis is increasing to the left hand side of the patient. 
         The y-axis is increasing to the posterior side of the patient. 
         The z-axis is increasing toward the head of the patient.    
-    if "QUADRUPED" -> check http://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.7.6.2.html for implementation details. for now, just fail
+    if "QUADRUPED" -> check http://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.7.6.2.html
+        for implementation details. for now, just fail
 
     [0020,0037]: Image Orientation specifies direction of row and column.
         value will be encoded as: row(X, Y, Z) col(X, Y, Z)
         in format: ['1' '0' '0' '0' '1' '0']
         which means row is in x-direction and col is in y-direction in this example
     """
+    l1_indent = g_indents[1]
+    l2_indent = g_indents[2]
     if (dataset_list is None):
-        print('No dicom files found. skipping')
+        print_indent('No dicom files found. skipping', l2_indent)
         return None
     else:
         ImageOrientation = None
@@ -117,7 +129,7 @@ def build_dataset(dataset_list):
 
             if (this_ImageOrientation != ImageOrientation
                 or this_OrientationType != OrientationType):
-                print('orientation mismatch')
+                print_indent('orientation mismatch', l2_indent)
                 return None
 
         #SORT by slicenumber from high to low -> from inferior axial to superior axial
@@ -132,7 +144,7 @@ def build_dataset(dataset_list):
 
 
 def build_imvector(path, recursive=False):
-    """convenience function that combines read_dicom_dir and build_dataset
+    """convenience function that combinesstr( read_dicom_dir and build_dataset
 
     Args:
         path        --  full path to directory containing image dicoms
@@ -164,8 +176,10 @@ def loadImages(images_path, modalities):
             return None
         else:
             image_vectors = {}
+            l1_indent = g_indents[1]
+            l2_indent = g_indents[2]
             for mod in modalities:
-                print('Importing {mod:s} images'.format(mod=mod.upper()))
+                print_indent('Importing {mod:s} images'.format(mod=mod.upper()),l1_indent)
                 dicom_path = os.path.join(images_path, '{mod:s}'.format(mod=mod))
             
                 if (os.path.exists(dicom_path)):
@@ -173,17 +187,22 @@ def loadImages(images_path, modalities):
                     image_vectors[mod] = build_imvector(dicom_path, recursive=True)
                     image_vector = image_vectors[mod]
                     if (image_vector is not None):
-                        print('concatenated ' + str(image_vector.depth) + ' datasets' )
-                        print('{mod:s}_image_vect shape: '.format(mod=mod) + str(image_vector.array.shape))
+                        print_indent('concatenated {len:d} datasets of shape: ({d:d}, {r:d}, {c:d})'.format(
+                                len=image_vector.depth,
+                                d=1,
+                                r=image_vector.rows,
+                                c=image_vector.columns
+                            ), l2_indent)
+                        print_indent('{mod:s} image vect shape: {shape:s}'.format(
+                            mod=mod, shape=str(image_vector.array.shape)),l2_indent)
                 else:
-                    print('path to {mod:s} dicoms doesn\'t exist. skipping\n'
-                        '(path: {path:s}'.format(mod=mod, path=dicom_path)
-                    )
+                    print_indent('path to {mod:s} dicoms doesn\'t exist. skipping\n'
+                        '(path: {path:s}'.format(mod=mod, path=dicom_path), l2_indent)
                 print()
             return image_vectors
 
 
-def loadEntropy(entropy_pickle_path, image_vectors, radius=4):
+def loadEntropy(entropy_pickle_path, image_vectors, radius=4, savePickle=True):
     """Checks if entropy vector has already been pickled at path specified and
     loads the files if so, or computes entropy for each modality and pickles for later access.
     Returns tuple of entropy imvectors (CT_entropy, PET_entropy)
@@ -218,27 +237,42 @@ def loadEntropy(entropy_pickle_path, image_vectors, radius=4):
         # load first file that matches the search and move to next modality
         entropy_vectors = {}
         for mod in modalities:
+            l1_indent = g_indents[1]
+            l2_indent = g_indents[2]
+            print_indent('Loading {mod:s} entropy:'.format(mod=mod.upper()),l1_indent)
             # initialize to None
             entropy_vectors[mod] = None
             # find first pickle that matches modality string or compute entropy fresh for that modality
             match = next((f for f in files if mod in f.lower()), None) # gets first match and stops
             if (match is not None):
                 # found pickled entropy vector, load it and add to dict
-                print('Pickled entropy vector found ({mod:s}). Loading.'.format(mod=mod))
-                with open(os.path.join(entropy_pickle_path, match), 'rb') as p:
-                    entropy_vectors[mod] = pickle.load(p)
+                print_indent('Pickled entropy vector found ({mod:s}). Loading.'.format(mod=mod),l2_indent)
+                try:
+                    with open(os.path.join(entropy_pickle_path, match), 'rb') as p:
+                        entropy_vectors[mod] = pickle.load(p)
+                except:
+                    print_indent('there was a problem loading the file: {path:s}'.format(path=p),l2_indent)
+                    entropy_vectors[mod] = None
+                else:
+                    print_indent('Pickled {mod:s} entropy vector loaded successfully.'.format(
+                        mod=mod.upper()),l2_indent)
             else:
-                # if no file is matched for that modality, calculate instead if image dicom files are present for that modality
+                # if no file is matched for that modality, calculate instead if image dicom files are
+                #   present for that modality
                 # no match, compute entropy
-                print('No pickled entropy vector found ({mod:s}). Computing Now...'.format(mod=mod))
+                print_indent('No pickled entropy vector found ({mod:s})'.format(mod=mod),l2_indent)
                 # check for presence of image vector in modality
                 image = image_vectors[mod]
                 if image is not None:
+                    print_indent('Computing entropy now...'.format(mod=mod),l2_indent)
                     entropy_vectors[mod] = features.image_entropy(image, radius)
                     if entropy_vectors[mod] is None:
-                        print('Failed to compute entropy for {mod:s} images.'.format(mod=mod.upper()))
+                        print_indent('Failed to compute entropy for {mod:s} images.'.format(
+                            mod=mod.upper()),l2_indent)
                 else:
-                    print('No {mod:s} image vector was supplied. Could not compute entropy.'.format(mod=mod.upper()))
+                    print_indent('No {mod:s} image vector was supplied.'
+                        ' Could not compute entropy.'.format(mod=mod.upper()),l2_indent)
+            print()
 
         # return dict of modality specific entropy imvectors with keys defined by keys for image_vectors arg.
         return entropy_vectors
