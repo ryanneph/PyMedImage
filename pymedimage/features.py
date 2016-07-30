@@ -5,11 +5,20 @@ Utility functions for calculating common image features
 """
 import numpy as np
 from utils.imvector import imvector
-#import pycuda.autoinit
-#import pycuda.driver as cuda
-#from pycuda.compiler import SourceModule
+from utils.logging import print_indent, g_indents, print_timer
+import time
+import sys
+import pycuda.autoinit
+import pycuda.driver as cuda
+import pycuda.compiler
+from pycuda.compiler import SourceModule
+pycuda.compiler.DEFAULT_NVCC_FLAGS = ['--std=c++11']
 
-def image_entropy(image, radius=2):
+#indent shortnames
+l3 = g_indents[3]
+l4 = g_indents[4]
+
+def image_entropy(image, radius=2, verbose=False):
     """compute the pixel-wise entropy of an image over a region defined by neighborhood
     
     Args:
@@ -18,13 +27,11 @@ def image_entropy(image, radius=2):
     Returns:
         H as imvector with shape=image.shape
     """
-    bigTime
-    
-    if type(image) is imvector:
+    if isinstance(image, imvector):
         d = image.depth
         r = image.rows
         c = image.columns
-            
+
         def get_val(image, z, y, x):
             # image boundary handling is built into imvector.get_val
             return image.get_val(z,y,x)
@@ -33,7 +40,7 @@ def image_entropy(image, radius=2):
 
         #instantiate a blank imvector of the proper size
         H = imvector(np.zeros((d, r, c)))
-    elif type(image) is np.ndarray:
+    elif isinstance(image, np.ndarray):
         if image.ndim == 3:
             d, r, c = image.shape
         elif image.ndim == 2:
@@ -53,17 +60,32 @@ def image_entropy(image, radius=2):
     else:
         print('invalid image type supplied. Please specify an image of type imvector or type np.ndarray')
         return None
-    
+
     # z_radius_range controls 2d neighborhood vs 3d neighborhood for 2d vs 3d images
     if d == 1: #2D image
+        if verbose:
+            print_indent('Computing 2D entropy with radius: {:d}'.format(radius), l3)
         z_radius_range = [0]
     elif d>1: # 3D image
-        z_radius_range = range(-radius, radius+1) 
+        if verbose:
+            print_indent('Computing 3D entropy with radius: {:d}'.format(radius), l3)
+        z_radius_range = range(-radius, radius+1)
+
+    # timing
+    start_entropy_calc = time.time()
 
     # nested loop approach -> slowest, try GPU next
+    idx = -1
+    total_voxels = d * r * c
     for z in range(d):
         for y in range(r):
             for x in range(c):
+                idx += 1
+                if ( verbose and (idx % 50000 == 0 or idx == total_voxels-1)):
+                    print_indent('{p:0.2%} - voxel: {i:d} of {tot:d}'.format(
+                        p=idx/total_voxels,
+                        i=idx,
+                        tot=total_voxels), l4)
                 #print('z:{z:d}, y:{y:d}, x:{x:d}'.format(z=z,y=y,x=x))
                 val_counts = {}
                 for k_z in z_radius_range:
@@ -88,6 +110,10 @@ def image_entropy(image, radius=2):
     if type(image) is np.ndarray and d == 1:
         # need to reshape ndarray if input was 2d
         H = H.reshape((r, c))
+
+    end_entropy_calc = time.time()
+    if verbose:
+        print_timer('entropy calculation time:', start_entropy_calc-start_entropy_calc, l3)
     return H
 
 
@@ -98,29 +124,72 @@ def image_entropy_gpu(image_vect, radius=2):
 	radius -- neighborhood radius; where neighborhood size is isotropic and calculated as 2*radius+1
     """
     mod = SourceModule("""
-    #include <math.h> /* pow */
-
-    __global__ void image_entropy(float *dest, float *image_vect, int radius)
+    __global__ void image_entropy2(
+        float *image_vect)
     {
+        int radius = 4;
+        int z_radius = 0;
         // array index for this thread
-        const int i = blockIdx.x * blockDims.x + threadIdx.x;
+        int idx = blockIdx.y * (blockDim.x * blockDim.y) * 32
+                + blockIdx.x * (blockDim.x * blockDim.y)
+                + threadIdx.y * (blockDim.x)
+                + threadIdx.x;
+        //image_vect[idx] = idx % 255;
 
-        // Setup hash array for storing counts and initialize all to 0
-        int counts[pow(2*radius+1, 3)] = {0};
-
-        for (int k_z = -radius; k_z <= radius; k_z++) {
+        for (int k_z = -z_radius; k_z <= z_radius; k_z++) {
             for (int k_x = -radius; k_x <= radius; k_x++) {
                 for (int k_y = -radius; k_y <= radius; k_y++) {
+                    int k_idx = blockIdx.z * (threadIdx.z + k_z * blockDim.y * blockDim.x)
+                              + blockIdx.y * (threadIdx.y + k_y * blockDim.x)
+                              + blockIdx.x * (threadIdx.x + k_x);
+                            
                     // Count unique pixel intensities
-                    /* THIS IS GOING TO REQUIRE SOME ADDITIONAL THOUGHT
-                        ABOUT HOW TO REDUCE THREAD DIVERGENCE WHEN COUNTING THE UNIQUE
-                        OCCURENCES OF EACH PIXEL.
-                        COULD POTENTIALLY HASH THE PIXEL INTENSITY AND ASSIGN/INCREMENT COUNTS TO A LARGE ARRAY AT THE INDEX
-                        RETURNED BY THE HASHING ALGO. THEN LATER ACCESS THE STORED ARRAY OF HASH VALUES AND COUNTS, TO COMPUTE
-                        PROBABILITIES AND EVENTUAL VOXEL-WISE ENTROPY
-                        */
-
+                    //val = fmax(0, image_vect[k_idx])
+                    image_vect[idx] = idx % 255; 
+                }
+            }
         }
+
+        
     }
     """)
+
+    func = mod.get_function('image_entropy2')
+    
+    if isinstance(image_vect, np.ndarray):
+        if image_vect.ndim == 3:
+            d, r, c = image_vect.shape
+        elif image_vect.ndim == 2:
+            d, r, c = (1, *image_vect.shape)
+        image = image_vect.flatten()
+    elif isinstance(image_vect, imvector):
+        d = image_vect.depth
+        r = image_vect.rows
+        c = image_vect.columns
+        image = image_vect.array
+
+    if d == 1:
+        z_radius = 0
+    elif d > 1:
+        z_radius = radius
+
+    # block, grid dimensions
+
+    # allocate image on device in global memory
+    image = image.astype(np.float32)
+    image_gpu = cuda.mem_alloc(image.nbytes)
+    result = np.empty_like(image)
+    result_gpu = cuda.mem_alloc(image.nbytes)
+    # transfer image to device
+    cuda.memcpy_htod(image_gpu, image)
+    cuda.memcpy_htod(result_gpu, result)
+    # call device kernel
+    func(image_gpu, block=(16,16,1), grid=(32,32,1))
+    # get result from device
+    cuda.memcpy_dtoh(result, image_gpu)
+    
+    print(type(result))
+    print(result.shape)
+    print('GPU done')
+    return result.reshape(r,c)
 

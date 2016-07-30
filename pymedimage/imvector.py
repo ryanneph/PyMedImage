@@ -37,7 +37,11 @@ class imvector:
         self.rows = dataset.pixel_array.shape[0]
         self.columns = dataset.pixel_array.shape[1]
         self.sliceidx = []
-        self.sliceidx.append(dataset.ImageIndex)
+        if ('ImageIndex' in dataset.dir()):
+            # PET Image
+            self.sliceidx.append(dataset.ImageIndex)
+        elif ('InstanceNumber' in dataset.dir()):
+            self.sliceidx.append(dataset.InstanceNumber)
 
 
     def SizeMatch(self, dataset):
@@ -61,7 +65,11 @@ class imvector:
                 #append flattened pixel data to self.array
                 self.array = np.concatenate((self.array, dataset.pixel_array.flatten()), axis=0) 
                 self.depth += 1
-                self.sliceidx.append(dataset.ImageIndex)
+                if ('ImageIndex' in dataset.dir()):
+                    # PET Image
+                    self.sliceidx.append(dataset.ImageIndex)
+                elif ('InstanceNumber' in dataset.dir()):
+                    self.sliceidx.append(dataset.InstanceNumber)
             else:
                 #nothing here yet, just iniitialize with this dataset
                 self.INIT_dataset(dataset)
