@@ -104,7 +104,7 @@ def image_entropy(image, radius=2, verbose=False):
                 total_counts = sum(val_counts.values())
                 for i, val in enumerate(val_counts.keys()):
                     val_probs[i] = val_counts[val]/total_counts
-                #calculate local entropy
+                # calculate local entropy
                 h = -np.sum(val_probs*np.log(val_probs)) #/ np.log(65536)
                 set_val(H, z, y, x, h)
     if type(image) is np.ndarray and d == 1:

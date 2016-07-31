@@ -278,9 +278,9 @@ def loadEntropy(entropy_pickle_path, image_vectors, radius=4, savePickle=True, v
                             with open(pickle_dump_path, 'wb') as p:
                                 pickle.dump(entropy_vectors[mod], p)
                         except:
-                            print_indent('error pickling: {path:s}'.format(pickle_dump_path),l2_indent)
+                            print_indent('error pickling: {:s}'.format(pickle_dump_path),l2_indent)
                         else:
-                            print_indent('entropy pickled successfully to:\n{path:s}',l2_indent)
+                            print_indent('entropy pickled successfully to:\n{:s}'.format(pickle_dump_path),l2_indent)
                 else:
                     print_indent('No {mod:s} image vector was supplied.'
                         ' Could not compute entropy.'.format(mod=mod.upper()),l2_indent)

@@ -15,7 +15,7 @@ def __get_indent_string(indent):
 
 def print_timer(message, time_secs, indent=0):
     if (indent>0):
-        message = ''.join(__get_indent_string(indent), message)
+        message = ''.join([__get_indent_string(indent), message])
     print('{message:s} {time:s}'.format(
         message=message,
         time=(time.strftime('%H:%M:%S', time.gmtime(time_secs)))
