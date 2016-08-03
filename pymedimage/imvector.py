@@ -15,6 +15,7 @@ class imvector:
     columns is the original dim2 of the flattened ndarray in self.array
     """
     def __init__(self, dataset=None):
+        self.mask = None
         if type(dataset) is dicom.dataset:
             self.INIT_dataset(dataset)
         elif type(dataset) is np.ndarray:
@@ -29,10 +30,10 @@ class imvector:
             self.rows = 0
             self.columns = 0
             self.sliceidx = []
-    
-    
+
+
     def INIT_dataset(self, dataset):
-        self.array = dataset.pixel_array.flatten()  
+        self.array = dataset.pixel_array.flatten()
         self.depth = 1
         self.rows = dataset.pixel_array.shape[0]
         self.columns = dataset.pixel_array.shape[1]
@@ -91,7 +92,7 @@ class imvector:
         else:
             pos = r*c*z + c*y + x
             return self.array[pos]
-        
+
 
     def set_val(self, z, y, x, value):
         """convenience function for reassigning image intensity at location

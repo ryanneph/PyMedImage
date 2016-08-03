@@ -113,7 +113,7 @@ def image_entropy(image, radius=2, verbose=False):
 
     end_entropy_calc = time.time()
     if verbose:
-        print_timer('entropy calculation time:', start_entropy_calc-start_entropy_calc, l3)
+        print_timer('entropy calculation time:', end_entropy_calc-start_entropy_calc, l3)
     return H
 
 
@@ -155,7 +155,7 @@ def image_entropy_gpu(image_vect, radius=2):
     """)
 
     func = mod.get_function('image_entropy2')
-    
+
     if isinstance(image_vect, np.ndarray):
         if image_vect.ndim == 3:
             d, r, c = image_vect.shape
@@ -187,7 +187,7 @@ def image_entropy_gpu(image_vect, radius=2):
     func(image_gpu, block=(16,16,1), grid=(32,32,1))
     # get result from device
     cuda.memcpy_dtoh(result, image_gpu)
-    
+
     print(type(result))
     print(result.shape)
     print('GPU done')
