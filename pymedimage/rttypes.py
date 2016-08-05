@@ -6,6 +6,7 @@ Contains datatype definitions necessary for working with Dicom volumes, slices, 
 import numpy as np
 import dicom # pydicom
 from utils import dcmio
+from operator import attrgetter, methodcaller
 
 class imslice():
     """Data type for a single dicom slice
@@ -38,6 +39,7 @@ class imslice():
             raise KeyError
         else:
             return self._dataset.data_element(tag).value
+
 
     def pixelData(self, mask=False, rescale=False, vectorize=False):
         """get numpy ndarray of pixel intensities.
@@ -219,7 +221,8 @@ class imvolume():
     performing further processing with the volume intensities
     """
     def __init__(self, slices, recursive=False):
-        self._sliceList = None
+        self.__dict_instanceNumber = {}
+        self.__dict_SOPInstanceUID = {}
         self.numberOfSlices = None
         self.rows = None
         self.columns = None
@@ -280,9 +283,24 @@ class imvolume():
         self.seriesInstanceUID = slices[0].seriesInstanceUID()
         self.rescaleSlope = slices[0].rescaleSlope()
         self.rescaleIntercept = slices[0].rescaleIntercept()
-        self._sliceList = slices
+        # add slices to dicts
+        for slice in slices:
+            self.__dict_instanceNumber[slice.instanceNumber()] = slice
+            self.__dict_SOPInstanceUID[slice.SOPInstanceUID()] = slice
 
-    def getSlice(ID, asdataset=False, mask=False, rescale=False, vectorize=False):
+    def _sliceList(self):
+        """Function allowing extraction of a list of imslices from volume dictionary
+        
+        Returns:
+            list<imslices>[self.numberOfSlices]
+        """
+        if (len(self.__dict_instanceNumber) == len(self.__dict_SOPInstanceUID)):
+            return list(self.__dict_instanceNumber.values())
+        else:
+            print('ERROR: dictionaries do not match')
+            raise Exception
+
+    def getSlice(self, ID, asdataset=False, mask=False, rescale=False, vectorize=False):
         """takes ID as SOPInstanceUID[string] or InstanceNumber[int] and returns a numpy ndarray or\
                 the dataset object
 
@@ -296,22 +314,59 @@ class imvolume():
                             pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
             vectorize  -- return a 1darray in row-major order
         """
-        ##TODO
-        pass
+        if (isinstance(ID, str)):
+            # check SOPInstanceUID dict for existence
+            __dict = self.__dict_SOPInstanceUID
+        elif (isinstance(ID, int)):
+            # check instanceNumber dict for existence
+            __dict = self.__dict_instanceNumber
+        else:
+            print('invalid type: "{:s}". ID must be a "str" or "int"'.format(str(type(ID))))
+            raise TypeError
 
-    def vectorize(mask=False, rescale=False):
-        """constructs vector (np 1darray) of all contained imslices.
+        # check for existence
+        if (not ID in __dict):
+            print('ID: "{:s}" not found in volume'.format(str(ID)))
+            raise KeyError
 
-        Shape will be (numberOfSlices*rows*columns, 1)
-        
+        if (asdataset):
+            return __dict[ID]
+        else:
+            return __dict[ID].pixelData(mask=mask, rescale=rescale, vectorize=vectorize)
+
+
+    def sortedSliceList(self, sortkey='instanceNumber', ascend=True):
+        """returns a sorted version of the volume's slice list where the key is the slice instanceNumber
+
+        Args:
+            sortkey      -- method that takes as input an imslice object and returns a sortkey
+            ascend       -- sort in ascending order?
+
+        Returns
+            list<imslice>[self.numberOfSlices]
+        """
+        return sorted(self._sliceList(), key=methodcaller(sortkey), reverse=(not ascend))
+
+    def vectorize(self, mask=False, rescale=False):
+        """constructs vector (np 1darray) of all contained imslices
+
+        Shape will be (numberOfSlices*rows*colums, 1)
+
         Optional Args:
             mask       -- return the element-wise product of pixel_array and binary mask
             rescale    -- return the element-wise rescaling of pixel_array using the formula:
                             pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
-        """
-        # sort by instance number first (from high to low -> inferior axial to superior axial)
-        self._sliceList.sort(key=(lambda slice: int(slice.instanceNumber)),reverse=True)
+            vectorize  -- return a 1darray in row-major order
 
+        Returns:
+            np.ndarray of shape (numberOfSlices*rows*colums, 1)
+        """
+        # sort by slice location (from low to high -> inferior axial to superior axial) 
         # begin vectorization
-        ##TODO 
+        vect_list = []
+        for slice in self.sortedSliceList(sortkey='sliceLocation', ascend=True):
+            vect_list.append(slice.pixelData(mask=mask, rescale=rescale, vectorize=True))
+        full_vect = np.vstack(vect_list)
+
+        return full_vect
 
