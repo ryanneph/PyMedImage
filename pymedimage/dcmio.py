@@ -128,10 +128,7 @@ def build_dataset(dataset_list):
                 return None
 
         #SORT by slicenumber from high to low -> from inferior axial to superior axial
-        if 'ImageIndex' in dataset_list[0].dir():
-            # PET images
-            dataset_list.sort(key=(lambda ds: int(ds.ImageIndex)),reverse=True)
-        elif 'InstanceNumber' in dataset_list[0].dir():
+        if 'InstanceNumber' in dataset_list[0].dir():
             # CT images
             dataset_list.sort(key=(lambda ds: int(ds.InstanceNumber)),reverse=True)
 
