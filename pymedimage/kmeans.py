@@ -20,6 +20,9 @@ def create_feature_array(features):
         print_indent('no features supplied. skipping',g_indents[1])
         return None
     else:
+        #registration
+        
+
         # take the first feature vectors shape to be the reference
         ref_shape = features[0].array.shape
         N = ref_shape[0]

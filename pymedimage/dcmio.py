@@ -11,6 +11,7 @@ import pickle
 import dicom # pydicom
 import numpy as np
 from utils.imvector import imvector
+from utils import rttypes
 from utils import features as features
 from utils.logging import print_indent, g_indents
 from string import Template
@@ -82,76 +83,8 @@ def read_dicom_dir(path, recursive=False, verbose=0):
         else:
             return None
 
-
-def build_dataset(dataset_list):
-    """Take a list of pydicom datasets and return a numpy 1Darray in depth-row-major order
-        
-    First check for consistent image orientation as defined in dicom headers:
-    [0010,2210]: Anatomical Orientation Type - absent or "BIPED"
-        The x-axis is increasing to the left hand side of the patient. 
-        The y-axis is increasing to the posterior side of the patient. 
-        The z-axis is increasing toward the head of the patient.    
-    if "QUADRUPED" -> check http://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.7.6.2.html
-        for implementation details. for now, just fail
-
-    [0020,0037]: Image Orientation specifies direction of row and column.
-        value will be encoded as: row(X, Y, Z) col(X, Y, Z)
-        in format: ['1' '0' '0' '0' '1' '0']
-        which means row is in x-direction and col is in y-direction in this example
-    """
-    l1_indent = g_indents[1]
-    l2_indent = g_indents[2]
-    if (dataset_list is None):
-        print_indent('No dicom files found. skipping', l2_indent)
-        return None
-    else:
-        ImageOrientation = None
-        if 'ImageOrientationPatient' in dataset_list[0]:
-            ImageOrientation = dataset_list[0].data_element('ImageOrientationPatient').value
-
-        OrientationType = None
-        if 'AnatomicalOrientationType' in dataset_list[0]:
-            OrientationType = dataset_list[0].data_element('AnatomicalOrientationType').value
-
-        for dataset in dataset_list[1:]:
-            this_ImageOrientation = None
-            if 'ImageOrientationPatient' in dataset_list[0]:
-                this_ImageOrientation = dataset_list[0].data_element('ImageOrientationPatient').value
-
-            this_OrientationType = None
-            if 'AnatomicalOrientationType' in dataset_list[0]:
-                this_OrientationType = dataset_list[0].data_element('AnatomicalOrientationType').value
-
-            if (this_ImageOrientation != ImageOrientation
-                or this_OrientationType != OrientationType):
-                print_indent('orientation mismatch', l2_indent)
-                return None
-
-        #SORT by slicenumber from high to low -> from inferior axial to superior axial
-        if 'InstanceNumber' in dataset_list[0].dir():
-            # CT images
-            dataset_list.sort(key=(lambda ds: int(ds.InstanceNumber)),reverse=True)
-
-        # begin image vector creation
-        image_vect = imvector()
-        for dataset in dataset_list:
-            # flatten each dataset into a vector then concatenate to the end of the image vector
-            image_vect.append(dataset)
-        return image_vect
-
-
-def build_imvector(path, recursive=False):
-    """convenience function that combinesstr( read_dicom_dir and build_dataset
-
-    Args:
-        path        --  full path to directory containing image dicoms
-        recursive   --  should we recursively search for dicom files within path?
-    """
-    return build_dataset(read_dicom_dir(path, recursive))
-
-
 def loadImages(images_path, modalities):
-    """takes a list of modality strings and loads dicoms into an imvector dataset from images_path
+    """takes a list of modality strings and loads dicoms into an imvolume dataset from images_path
 
     Args:
         images_path --  Full path to patient specific directory containing various modality dicom images
@@ -160,7 +93,7 @@ def loadImages(images_path, modalities):
         modalities  --  list of modality strings that are used to identify subdirectories from which dicoms
             are loaded
     Returns:
-        dictionary of {modality: imvector} that contains loaded image data for each modality supported
+        dictionary of {modality: imvolume} that contains loaded image data for each modality supported
     """
     # check if path specified exists
     if (not os.path.exists(images_path)):
@@ -172,7 +105,7 @@ def loadImages(images_path, modalities):
             print('No modalities supplied. skipping')
             return None
         else:
-            image_vectors = {}
+            volumes = {}
             l1_indent = g_indents[1]
             l2_indent = g_indents[2]
             for mod in modalities:
@@ -181,22 +114,20 @@ def loadImages(images_path, modalities):
 
                 if (os.path.exists(dicom_path)):
                     # recursively walk modality path for dicom images, and build a dataset from it
-                    image_vectors[mod] = build_imvector(dicom_path, recursive=True)
-                    image_vector = image_vectors[mod]
-                    if (image_vector is not None):
-                        print_indent('concatenated {len:d} datasets of shape: ({d:d}, {r:d}, {c:d})'.format(
-                                len=image_vector.depth,
+                    volumes[mod] = imvolume(dicom_path, recursive=True)
+                    volume = volumes[mod]
+                    if (volume is not None):
+                        print_indent('stacked {len:d} datasets of shape: ({d:d}, {r:d}, {c:d})'.format(
+                                len=volume.numberOfSlices,
                                 d=1,
-                                r=image_vector.rows,
-                                c=image_vector.columns
+                                r=volume.rows,
+                                c=volume.columns
                             ), l2_indent)
-                        print_indent('{mod:s} image vect shape: {shape:s}'.format(
-                            mod=mod, shape=str(image_vector.array.shape)),l2_indent)
                 else:
                     print_indent('path to {mod:s} dicoms doesn\'t exist. skipping\n'
                         '(path: {path:s}'.format(mod=mod, path=dicom_path), l2_indent)
                 print()
-            return image_vectors
+            return volumes
 
 
 def loadEntropy(entropy_pickle_path, image_vectors, radius=4, savePickle=True, verbose=False):

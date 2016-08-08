@@ -22,10 +22,10 @@ def image_entropy(image, radius=2, verbose=False):
     """compute the pixel-wise entropy of an image over a region defined by neighborhood
     
     Args:
-        image -- a flattened array of pixel intensities of type imvector or a matrix shaped numpy ndarray
+        image -- a flattened array of pixel intensities of type imslice or a matrix shaped numpy ndarray
         radius -- describes neighborood size in each dimension. radius of 4 would be a 9x9x9
     Returns:
-        H as imvector with shape=image.shape
+        H as imvolume with shape=image.shape
     """
     if isinstance(image, imvector):
         d = image.depth
