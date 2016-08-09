@@ -16,7 +16,7 @@ class imslice():
     def __init__(self, dataset):
         """store the dataset"""
         self._dataset = None
-        self.mask = None
+        self.maskslice = None
         if (isinstance(dataset, dicom.dataset.Dataset)):
             self._dataset = dataset
         else:
@@ -58,20 +58,20 @@ class imslice():
         pixel_data = self._dataset.pixel_array
         ##TODO Add handling for when pixel_array is jpeg compressed
 
-        # MASK
-        if (mask):
-            if (not self.mask is None):
-                pixel_data = np.multiply(pixel_data, self.mask)
-                print('image mask applied')
-            else:
-                print('No mask has been defined. returning unmasked data')
-
         # RESCALE
         if (rescale):
             f = float(self.rescaleSlope())
             i = float(self.rescaleIntercept())
             pixel_data = np.add(np.multiply(pixel_data, f), i)
             print('data rescaled using: ({f:0.3f} * data[i]) + {i:0.3f}'.format(f=f, i=i) )
+
+        # MASK
+        if (mask):
+            if (not self.mask is None):
+                pixel_data = np.multiply(pixel_data, self.maskslice.pixelData(vectorize=False))
+                print('image mask applied')
+            else:
+                print('No mask has been defined. returning unmasked data')
 
         # VECTORIZE
         if (vectorize):
@@ -213,6 +213,13 @@ class maskslice():
     def __init__():
         pass
 
+    def pixelData(self, vectorize=False):
+        """returns the mask binary pixel data as a matrix or vector
+
+        Optional Args:
+            vectorize  -- return a 1darray in row-major order
+        """
+        pass
 
 class imvolume():
     """Data container for a dicom series instance containing a set of imslices
@@ -220,9 +227,11 @@ class imvolume():
     contains a (sortable) list of imslices and sorting functions as well as convenience functions for
     performing further processing with the volume intensities
     """
-    def __init__(self, slices, recursive=False):
+    def __init__(self, slices, recursive=False, sortkey='instanceNumber', ascend=True, maskvolume_list=None):
         self.__dict_instanceNumber = {}
         self.__dict_SOPInstanceUID = {}
+        self._imvector = None
+        self._maskvector = None
         self.numberOfSlices = None
         self.rows = None
         self.columns = None
@@ -238,11 +247,18 @@ class imvolume():
 
         elif (isinstance(slices, list)):
             # pass to constructor
-            self._fromSliceList(slices)
+            self._fromSliceList(slices, maskvolume_list)
 
         else:
             print('must supply a list of imslices or a valid path to a dicom series')
             raise TypeError
+
+        # pair mask slices with slices
+        self._pairMasks(maskvolume_list)
+
+        # store static vectorized voxel intensities
+        self.__vectorize_static()
+
 
     def _fromDir(self, path, recursive=False):
         """constructor: takes path to directory containing dicom files and builds a list of imslices
@@ -287,6 +303,17 @@ class imvolume():
         for slice in slices:
             self.__dict_instanceNumber[slice.instanceNumber()] = slice
             self.__dict_SOPInstanceUID[slice.SOPInstanceUID()] = slice
+
+    def _pairMasks(self, maskvolume_list):
+        """takes a dict of mask volumes and matches each slice in each volume with the corresponding
+        imslice, storing its maskslice object to imslice.maskslice
+
+        Args:
+            maskvolume_dict     -- dict of key=contour name, value=maskvolume object
+
+        """
+        #TODO
+        pass
 
     def _sliceList(self):
         """Function allowing extraction of a list of imslices from volume dictionary
@@ -335,7 +362,7 @@ class imvolume():
             return __dict[ID].pixelData(mask=mask, rescale=rescale, vectorize=vectorize)
 
 
-    def sortedSliceList(self, sortkey='instanceNumber', ascend=True):
+    def sortedSliceList(self, sortkey='sliceLocation', ascend=True):
         """returns a sorted version of the volume's slice list where the key is the slice instanceNumber
 
         Args:
@@ -347,16 +374,10 @@ class imvolume():
         """
         return sorted(self._sliceList(), key=methodcaller(sortkey), reverse=(not ascend))
 
-    def vectorize(self, mask=False, rescale=False):
-        """constructs vector (np 1darray) of all contained imslices
+    def __vectorize_static(self):
+        """constructs vector (np 1darray) of all contained imslices and corresponding mask vector (if masks are available)
 
         Shape will be (numberOfSlices*rows*colums, 1)
-
-        Optional Args:
-            mask       -- return the element-wise product of pixel_array and binary mask
-            rescale    -- return the element-wise rescaling of pixel_array using the formula:
-                            pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
-            vectorize  -- return a 1darray in row-major order
 
         Returns:
             np.ndarray of shape (numberOfSlices*rows*colums, 1)
@@ -364,9 +385,142 @@ class imvolume():
         # sort by slice location (from low to high -> inferior axial to superior axial) 
         # begin vectorization
         vect_list = []
+        mask_list = []
         for slice in self.sortedSliceList(sortkey='sliceLocation', ascend=True):
-            vect_list.append(slice.pixelData(mask=mask, rescale=rescale, vectorize=True))
-        full_vect = np.vstack(vect_list)
+            vect_list.append(slice.pixelData(vectorize=True))
+            mask_list.append(slice.maskslice)
+        self._imvector = np.vstack(vect_list)
+        self._maskvector = np.vstack(mask_list)
 
-        return full_vect
 
+    def vectorize(self, mask=False, rescale=False):
+        """Apply mask and rescale options to vectorized voxel intensities from slices in the volume
+
+        Shape will be (numberOfSlices*rows*colums, 1)
+
+        Optional Args:
+            mask       -- return the element-wise product of pixel_array and binary mask
+            rescale    -- return the element-wise rescaling of pixel_array using the formula:
+                            pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
+
+        Returns:
+            np.ndarray of shape (numberOfSlices*rows*colums, 1)
+        """
+        vect = self._imvector
+
+        # RESCALE
+        if (rescale):
+            f = float(self.rescaleSlope())
+            i = float(self.rescaleIntercept())
+            vect = np.add(np.multiply(vect, f), i)
+            print('data rescaled using: ({f:0.3f} * data[i]) + {i:0.3f}'.format(f=f, i=i) )
+
+        # MASK
+        if (mask):
+            if (not self.mask is None):
+                vect = np.multiply(vect, self.mask)
+                print('image mask applied')
+            else:
+                print('No mask has been defined. returning unmasked data')
+
+        return vect
+
+    def get_val(self, z, y, x, mask=False):
+        """returns the voxel intensity from the static vectorized image at a location
+
+        Uses depth-row major ordering:
+        depth: axial slices inf->sup
+        rows: coronal slices anterior->posterior
+        cols: sagittal slices: pt.right->pt.left
+        """
+        r = self.rows
+        c = self.columns
+        d = self.numberOfSlices
+        if (z<0 or y<0 or x<0) or (z>=d or y>=r or x>=c):
+            return 0
+        else:
+            pos = r*c*z + c*y + x
+            return self._imvector[pos] * self._maskvector[pos] if mask else 1
+
+
+def featvolume():
+    def __init__(self, shape):
+        """initialize an empty feature volume of shape specified
+
+        Args:
+            shape      -- shape in numpy format as a tuple
+        """
+        if (len(shape) == 2):
+            self.numberOfSlices = 1
+            self.rows = shape[0]
+            self.columns = shape[1]
+        elif (len(shape) == 3):
+            self.numberOfSlices = shape[0]
+            self.rows = shape[1]
+            self.columns = shape[2]
+
+        self._vector = np.zeros((self.numberOfSlices * self.rows * self.columns, 1))
+
+    def get_val(self, z, y, x):
+        """convenience function for returning vector intensity at location
+
+        Uses depth-row major ordering:
+        depth: axial slices inf->sup
+        rows: coronal slices anterior->posterior
+        cols: sagittal slices: pt.right->pt.left
+        """
+        r = self.rows
+        c = self.columns
+        d = self.numberOfSlices
+        if (z<0 or y<0 or x<0) or (z>=d or y>=r or x>=c):
+            return 0
+        else:
+            pos = r*c*z + c*y + x
+            return self._vector[pos]
+
+    def set_val(self, z, y, x, value):
+        """convenience function for reassigning feature intensity at location
+
+        Uses depth-row major ordering:
+        depth: axial slices inf->sup
+        rows: coronal slices anterior->posterior
+        cols: sagittal slices: pt.right->pt.left
+        """
+        r = self.rows
+        c = self.columns
+        d = self.numberOfSlices
+        if not (z<0 or y<0 or x<0) and not (z>=d or y>=r or x>=c):
+            pos = r*c*z + c*y + x
+            self._vector[pos] = value
+
+    def getSlice(self, idx=0, axis=0, vectorize=False):
+        """extract a slice along the axis specified in numpy matrix form
+
+        Args:
+            idx     --  index of the slice
+            axis    --  specifies axis along which to extract 
+                            Uses depth-row major ordering:
+                            axis=0 -> depth: axial slices inf->sup
+                            axis=1 -> rows: coronal slices anterior->posterior
+                            axis=2 -> cols: sagittal slices: pt.right->pt.left
+            vectorize --  flatten to 1Darray?
+        """
+        # perform index bounding
+        if axis==1:
+            idx = 0 if (idx < 0) else (self.rows-1 if idx >= self.rows else idx)
+            slice = self.array.reshape((self.numberOfSlices, self.rows, self.columns))[:, idx, :]
+        elif axis==2:
+            idx = 0 if (idx < 0) else (self.columns-1 if idx >= self.columns else idx)
+            slice = self.array.reshape((self.numberOfSlices, self.rows, self.columns))[:, :, idx]
+        else:
+            idx = 0 if (idx < 0) else (self.numberOfSlices-1 if idx >= self.depth else idx)
+            slice = self.array.reshape((self.numberOfSlices, self.rows, self.columns))[idx, :, :]
+
+        if vectorize:
+            slice = slice.flatten()
+        return slice
+
+    def vectorize(self):
+        """consistency method returning the vectorized voxels in the feature volume
+        """
+        return self._vector

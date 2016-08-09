@@ -18,7 +18,7 @@ pycuda.compiler.DEFAULT_NVCC_FLAGS = ['--std=c++11']
 l3 = g_indents[3]
 l4 = g_indents[4]
 
-def image_entropy(image, radius=2, verbose=False):
+def image_entropy(image_volume, radius=2, verbose=False):
     """compute the pixel-wise entropy of an image over a region defined by neighborhood
     
     Args:
@@ -27,25 +27,25 @@ def image_entropy(image, radius=2, verbose=False):
     Returns:
         H as imvolume with shape=image.shape
     """
-    if isinstance(image, imvector):
-        d = image.depth
-        r = image.rows
-        c = image.columns
+    if isinstance(image_volume, imvolume):
+        d = image_volume.numberOfSlices
+        r = image_volume.rows
+        c = image_volume.columns
 
-        def get_val(image, z, y, x):
+        def get_val(image_volume, z, y, x):
             # image boundary handling is built into imvector.get_val
-            return image.get_val(z,y,x)
-        def set_val(image, z, y, x, val):
-            image.set_val(z,y,x,val)
+            return image_volume.get_val(z,y,x)
+        def set_val(image_volume, z, y, x, val):
+            image_volume.set_val(z,y,x,val)
 
         #instantiate a blank imvector of the proper size
-        H = imvector(np.zeros((d, r, c)))
-    elif isinstance(image, np.ndarray):
-        if image.ndim == 3:
-            d, r, c = image.shape
-        elif image.ndim == 2:
-            d, r, c = (1, *image.shape)
-            image = image.reshape((d,r,c))
+        H = featvolume((d, r, c))
+    elif isinstance(image_volume, np.ndarray):
+        if image_volume.ndim == 3:
+            d, r, c = image_volume.shape
+        elif image_volume.ndim == 2:
+            d, r, c = (1, *image_volume.shape)
+            image_volume = image_volume.reshape((d,r,c))
 
         #instantiate a blank np.ndarray of the proper size
         H = np.zeros((d, r, c))
