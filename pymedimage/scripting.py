@@ -39,9 +39,9 @@ def loadImages(images_path, modalities, rtstruct_path=None):
 
                 if (os.path.exists(dicom_path)):
                     # read maskslices from dicom rtstruct file
-                    maskvolume_list = loadMaskVolumes(rtstruct_path)
+                    maskvolume_dict = loadMaskVolumes(rtstruct_path)
                     # recursively walk modality path for dicom images, and build a dataset from it
-                    volumes[mod] = imvolume(dicom_path, recursive=True, maskvolume_list=maskvolume_list)
+                    volumes[mod] = imvolume(dicom_path, recursive=True, maskvolume_dict=maskvolume_dict)
                     volume = volumes[mod]
                     if (volume is not None):
                         print_indent('stacked {len:d} datasets of shape: ({d:d}, {r:d}, {c:d})'.format(
@@ -65,13 +65,48 @@ def loadMaskVolumes(rtstruct_path):
     Returns:
         dict<key='contour name', val=maskvolume object>[number of contours in file]
     """
-    #TODO 
     if (not rtstruct_path is None and os.path.exists(rtstruct_path)):
         # parse rtstruct file and instantiate maskvolume for each contour located
         # add each maskvolume to dict with key set to contour name and number?
-        pass
+        ds = dicom.read_file(rtstruct_path)
+        if (not ds is None):
+            # get structuresetROI sequence
+            StructureSetROI_list = ds.StructureSetROISequence
+            nContours = len(StructureSetROI_list)
+            if (nContours <= 0):
+                print('no contours were found')
+                return None
+
+            # Add structuresetROI to dict
+            StructureSetROI_dict = {StructureSetROI.ROINumber: StructureSetROI
+                                    for StructureSetROI
+                                    in StructureSetROI_list }
+
+            # get dict containing a contour dataset for each StructureSetROI with a paired key=ROINumber
+            ROIContour_dict = {ROIContour.ReferencedROINumber: ROIContour
+                                       for ROIContour
+                                       in ds.ROIContourSequence }
+
+            # construct a dict of maskvolumes where contour name is key
+            maskvolume_dict = {maskvolume_single.ROIName: maskvolume_single
+                               for maskvolume_single
+                               in [maskvolume(value, StructureSetROI_dict[key])
+                                   for (key, value)
+                                   in ROIContour_dict.items()
+                                   ]
+                               }
+            print(", ".join([str(ROI.ROINumber) + ":" + ROIName
+                             for (ROIName, ROI)
+                             in maskvolume_dict.items()
+                            ]))
+            return maskvolume_dict
+        else:
+            print('no dataset was found')
+            return None
+
     else:
         print('path invalid: "{:s}"'.format(str(rtstruct_path)))
+        return None
 
 def loadEntropy(entropy_pickle_path, image_volumes, radius=4, savePickle=True, verbose=False):
     """Checks if entropy vector has already been pickled at path specified and

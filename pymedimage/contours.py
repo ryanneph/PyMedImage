@@ -18,7 +18,7 @@ class triplet:
                            float(z) ]
 
 
-class mask:
+class contourPoints:
     def __init__(self, raw_contour_data):
         """takes contour data from rtstruct and creates ordered list of 3d coord triplets"""
         self.raw_contour_data = None
@@ -61,4 +61,5 @@ class mask:
         Returns:
             1Darray binary mask with same shape as imvector
         """
+        pass
 

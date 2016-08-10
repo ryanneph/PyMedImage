@@ -8,6 +8,12 @@ import dicom # pydicom
 from utils import dcmio
 from operator import attrgetter, methodcaller
 
+from itertools import zip_longest
+def grouper(n, iterable, fillvalue=None):
+    "grouper(3, 'ABCDEFG', 'x') --> ABC DEF Gxx"
+    args = [iter(iterable)] * n
+    return zip_longest(fillvalue=fillvalue, *args)
+
 class imslice():
     """Data type for a single dicom slice
 
@@ -56,7 +62,6 @@ class imslice():
             return None
 
         pixel_data = self._dataset.pixel_array
-        ##TODO Add handling for when pixel_array is jpeg compressed
 
         # RESCALE
         if (rescale):
@@ -206,20 +211,117 @@ class imslice():
         return self._safeGetAttr('RescaleIntercept')
 
 
-class maskslice():
-    """
+class triplet:
+    """Storage class for 3d points"""
+    def __init__(self, x,y,z):
+        self.__attrs__ = [ float(x),
+                           float(y),
+                           float(z) ]
 
-    """
-    def __init__():
+class contourPoints:
+    def __init__(self, raw_contour_data):
+        """takes contour data from rtstruct and creates ordered list of 3d coord triplets"""
+        self.raw_contour_data = None
+        self.contour_points = None
+        if (raw_contour_data is not None and isinstance(raw_contour_data, list)):
+            self.raw_contour_data = raw_contour_data
+            self.contour_points = self.unpackContourData(raw_contour_data)
+        else:
+            print('contour_data is not of the appropriate type')
+
+    def unpackContourData(self, raw_contour_data):
+        """take raw contour_data from rtstruct and return ordered list of 3d coord triplets"""
+        if (raw_contour_data is not None and isinstance(raw_contour_data, list)):
+            points_list = []
+            for x, y, z in grouper(3, raw_contour_data):
+                points_list.append(triplet(x,y,z))
+            return points_list
+        else:
+            return None
+
+    def __str__(self):
+        outstr = ''
+        for point in self.contour_points:
+            outstr += '('
+            first = True
+            for value in point.__attrs__:
+                if first==True:
+                    first=False
+                else:
+                    outstr += ', '
+                outstr += '{:0.3f}'.format(value)
+            outstr += ')\n'
+        return outstr
+
+    def denseMask(self, shape):
+        """converts contour_points list to a dense 1Darray binary mask in shape of imvector images
+
+        Args:
+            shape   --  numpy shape object
+        Returns:
+            1Darray binary mask with same shape as imvector
+        """
         pass
 
-    def pixelData(self, vectorize=False):
+
+class maskslice():
+    """takes a contour dataset and extracts properties
+    """
+    def __init__(self, contour_dataset):
+        # set properties
+        self.numberOfPoints = contour_dataset.NumberOfContourPoints
+        if (self.numberOfPoints <=0):
+            print('no points found')
+            raise ValueError
+        self.contourGeometricType = contour_dataset.ContourGeometricType
+        self.contourPoints = contourPoints(contour_dataset.ContourData)
+        self.SOPInstanceUID = contour_dataset.ContourImageSequence[0].ReferencedSOPInstanceUID
+        pass
+
+    def pixelData(self, startlocation, pixelspacing, vectorize=False):
         """returns the mask binary pixel data as a matrix or vector
+
+        Args:
+            startlocation  -- volume start location (of first pixel) for accompanying image data as 
+                                a tuple of coordinate measures (z, y, x) in mm
+            pixelspacing   -- spacing between adjacent pixels as a tuple (z, y, x) in mm
 
         Optional Args:
             vectorize  -- return a 1darray in row-major order
         """
-        pass
+        # for each coordinate tuple in contour points, convert to actual coordinate indices and
+        # generate binary mask using pillow draw polygon
+        print(self.contourPoints)
+
+
+class maskvolume():
+    """Takes dicom dataset: ROIContour and StructureSetROI for a single ROI and constructs/stores maskslices
+    for each slice in a dict by key=SOPInstanceUID
+    """
+    def __init__(self, ROIContour, StructureSetROI):
+        """takes ROIContour and supplementary info in StructureSetROI and creates a dict of maskslices
+        accessible by key=SOPInstanceUID
+        """
+        self.ROIName = None
+        self.referencedFrameOfReferenceUID = None
+        self.modality = None
+        self.ROINumber = None
+        self.__dict_SOPInstanceUID = {}
+
+        # assign properties
+        if (ROIContour is not None and StructureSetROI is not None):
+            self.ROIName = StructureSetROI.ROIName
+            self.ROINumber = StructureSetROI.ROINumber
+            self.referencedFrameOfReferenceUID = StructureSetROI.ReferencedFrameOfReferenceUID
+
+            # populate slice dict
+            for slicedataset in ROIContour.ContourSequence:
+                maskslice_single = maskslice(slicedataset)
+                self.__dict_SOPInstanceUID[maskslice_single.SOPInstanceUID] = maskslice_single
+        else:
+            print('invalid datasets provided')
+            raise ValueError
+
 
 class imvolume():
     """Data container for a dicom series instance containing a set of imslices
@@ -227,7 +329,7 @@ class imvolume():
     contains a (sortable) list of imslices and sorting functions as well as convenience functions for
     performing further processing with the volume intensities
     """
-    def __init__(self, slices, recursive=False, sortkey='instanceNumber', ascend=True, maskvolume_list=None):
+    def __init__(self, slices, recursive=False, sortkey='instanceNumber', ascend=True, maskvolume_dict=None):
         self.__dict_instanceNumber = {}
         self.__dict_SOPInstanceUID = {}
         self._imvector = None
@@ -247,14 +349,14 @@ class imvolume():
 
         elif (isinstance(slices, list)):
             # pass to constructor
-            self._fromSliceList(slices, maskvolume_list)
+            self._fromSliceList(slices)
 
         else:
             print('must supply a list of imslices or a valid path to a dicom series')
             raise TypeError
 
         # pair mask slices with slices
-        self._pairMasks(maskvolume_list)
+        self._pairMasks(maskvolume_dict)
 
         # store static vectorized voxel intensities
         self.__vectorize_static()
