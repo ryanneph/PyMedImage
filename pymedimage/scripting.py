@@ -95,10 +95,12 @@ def loadMaskVolumes(rtstruct_path):
                                    in ROIContour_dict.items()
                                    ]
                                }
-            print(", ".join([str(ROI.ROINumber) + ":" + ROIName
-                             for (ROIName, ROI)
-                             in maskvolume_dict.items()
-                            ]))
+            debug = False
+            if debug:
+                print(", ".join([str(ROI.ROINumber) + ":" + ROIName
+                                 for (ROIName, ROI)
+                                 in maskvolume_dict.items()
+                                ]))
             return maskvolume_dict
         else:
             print('no dataset was found')
