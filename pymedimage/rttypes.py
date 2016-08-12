@@ -4,6 +4,8 @@ Contains datatype definitions necessary for working with Dicom volumes, slices, 
 """
 
 import numpy as np
+import PIL
+from PIL.ImageDraw import Draw
 import dicom # pydicom
 from utils import dcmio
 from operator import attrgetter, methodcaller
@@ -23,6 +25,8 @@ class imslice():
         """store the dataset"""
         self._dataset = None
         self.maskslice_dict = {}
+        self._densemaskslice = None
+        self.__densemaskslice_ROIName = None
         if (isinstance(dataset, dicom.dataset.Dataset)):
             self._dataset = dataset
         else:
@@ -72,12 +76,16 @@ class imslice():
 
         # MASK
         if (mask):
-            if (not self.mask is None):
-                thismaskslice = self.maskslice_dict[ROIName]
-                pixel_data = np.multiply(pixel_data, thismaskslice.pixelData(vectorize=False))
-                print('image mask applied')
+            if (self._densemaskslice is not None
+                and (ROIName == self.__densemaskslice_ROIName
+                     or ROIName is None)):
+                thisdensemaskslice = self._densemaskslice
             else:
-                print('No mask has been defined. returning unmasked data')
+                thisdensemaskslice = self.makeDenseMaskSlice(ROIName)
+                self.__densemaskslice_ROIName = ROIName
+
+            pixel_data = np.multiply(pixel_data, thisdensemaskslice)
+            print('image mask applied')
 
         # VECTORIZE
         if (vectorize):
@@ -85,6 +93,42 @@ class imslice():
             pixel_data = pixel_data.flatten(order='C').reshape((-1, 1), order='C')
 
         return pixel_data
+
+    def makeDenseMaskSlice(self, ROIName):
+        """use slice size and location info to construct dense binary mask based on the contour points
+        defined in ROIName
+        """
+        # get maskslice from dict
+        if (ROIName is None):
+            #use first contour
+            ROIName = list(self.maskslice_dict.keys())[0]
+            print("masking with default contour ({:s})".format(ROIName))
+        if (ROIName not in self.maskslice_dict):
+            print('contour named: "{name:s}" not found. no mask applied'.format(name=ROIName))
+            return np.ones((self.rows(), self.columns()))
+        slice = self.maskslice_dict[ROIName]
+
+        # create 2d coords list with index coordinates rather than relative coordinates
+        (y_space, x_space) = self.pixelSpacing()
+        z_space = self.sliceThickness()
+        (x_start, y_start, z_start) = self.imagePositionPatient()
+
+        contour_points = slice.contour_points
+        index_coords = []
+        for (x, y, z) in contour_points:
+            # shift x and y and scale appropriately
+            x_idx = round((x-x_start)/x_space)
+            y_idx = round((y-y_start)/y_space)
+            index_coords.append( (x_idx, y_idx) )
+
+        # use PIL to draw the polygon as a dense image
+        im = PIL.Image.new('1', (self.rows(), self.columns()), color=0)
+        imdraw = Draw(im)
+        imdraw.polygon(index_coords, fill=1, outline=None)
+        del imdraw
+
+        # convert from PIL image to np.ndarray and threshold to binary
+        return np.array(im.getdata()).reshape((im.size[0], im.size[1]))
 
     def sliceThickness(self):
         """gets thickness of this slice in mm
@@ -212,40 +256,38 @@ class imslice():
         return self._safeGetAttr('RescaleIntercept')
 
 
-class triplet:
-    """Storage class for 3d points"""
-    def __init__(self, x,y,z):
-        self.__attrs__ = [ float(x),
-                           float(y),
-                           float(z) ]
-
-class contourPoints:
-    def __init__(self, raw_contour_data):
+class maskslice():
+    def __init__(self, slicedataset):
         """takes contour data from rtstruct and creates ordered list of 3d coord triplets"""
         self.raw_contour_data = None
         self.contour_points = None
-        if (raw_contour_data is not None and isinstance(raw_contour_data, list)):
-            self.raw_contour_data = raw_contour_data
-            self.contour_points = self.unpackContourData(raw_contour_data)
+        if (slicedataset is not None and isinstance(slicedataset, dicom.dataset.Dataset)):
+            self.raw_contour_data = slicedataset.ContourData
+            self.contour_points = self._unpackContourData(self.raw_contour_data)
         else:
             print('contour_data is not of the appropriate type')
 
-    def unpackContourData(self, raw_contour_data):
+    def _unpackContourData(self, raw_contour_data):
         """take raw contour_data from rtstruct and return ordered list of 3d coord triplets"""
         if (raw_contour_data is not None and isinstance(raw_contour_data, list)):
             points_list = []
             for x, y, z in grouper(3, raw_contour_data):
-                points_list.append(triplet(x,y,z))
+                points_list.append( (x,y,z) )
             return points_list
         else:
             return None
+
+    def sliceLocation(self):
+        """returns relative coordinates for the slice orthogonal direction
+        """
+        return self.contour_points[0][2]
 
     def __str__(self):
         outstr = ''
         for point in self.contour_points:
             outstr += '('
             first = True
-            for value in point.__attrs__:
+            for value in point:
                 if first==True:
                     first=False
                 else:
@@ -253,47 +295,6 @@ class contourPoints:
                 outstr += '{:0.3f}'.format(value)
             outstr += ')\n'
         return outstr
-
-
-class maskslice():
-    """takes a contour dataset and extracts properties
-    """
-    def __init__(self, contour_dataset):
-        # set properties
-        self.numberOfPoints = contour_dataset.NumberOfContourPoints
-        if (self.numberOfPoints <=0):
-            print('no points found')
-            raise ValueError
-        self.contourGeometricType = contour_dataset.ContourGeometricType
-        self.contourPoints = contourPoints(contour_dataset.ContourData)
-        self.SOPInstanceUID = contour_dataset.ContourImageSequence[0].ReferencedSOPInstanceUID
-        self._cached_pixelData = None
-
-    def pixelData(self, startlocation, pixelspacing, vectorize=False):
-        """returns the mask binary pixel data as a matrix or vector
-
-        Args:
-            startlocation  -- volume start location (of first pixel) for accompanying image data as 
-                                a tuple of coordinate measures (z, y, x) in mm
-            pixelspacing   -- spacing between adjacent pixels as a tuple (z, y, x) in mm
-
-        Optional Args:
-            vectorize  -- return a 1darray in row-major order
-        """
-        # for each coordinate tuple in contour points, convert to actual coordinate indices and
-        # generate binary mask using pillow draw polygon
-
-        # if cached result already exists then load that instead
-        if (self._cached_pixelData is not None):
-            return self._cached_pixelData
-        else:
-            # calculate new mask from contourpoints and image geometry
-            #calcmask = 
-            #TODO
-
-            # cache result for use later without recalc
-            self._cached_pixelData = calcmask
-            return calcmask
 
 
 class maskvolume():
@@ -304,11 +305,12 @@ class maskvolume():
         """takes ROIContour and supplementary info in StructureSetROI and creates a dict of maskslices
         accessible by key=SOPInstanceUID
         """
+        self._dataset_ROIContour = ROIContour
+        self._dataset_StructureSetROI = StructureSetROI
         self.ROIName = None
         self.referencedFrameOfReferenceUID = None
-        self.modality = None
         self.ROINumber = None
-        self._dict_SOPInstanceUID = {}
+        self.slicelist = []
 
         # assign properties
         if (ROIContour is not None and StructureSetROI is not None):
@@ -316,10 +318,9 @@ class maskvolume():
             self.ROINumber = StructureSetROI.ROINumber
             self.referencedFrameOfReferenceUID = StructureSetROI.ReferencedFrameOfReferenceUID
 
-            # populate slice dict
+            # populate slicelist
             for slicedataset in ROIContour.ContourSequence:
-                maskslice_single = maskslice(slicedataset)
-                self._dict_SOPInstanceUID[maskslice_single.SOPInstanceUID] = maskslice_single
+                self.slicelist.append(maskslice(slicedataset))
         else:
             print('invalid datasets provided')
             raise ValueError
@@ -333,10 +334,11 @@ class imvolume():
     """
     def __init__(self, slices, recursive=False, sortkey='instanceNumber', ascend=True, maskvolume_dict=None,
                  ROIName=None):
-        self.__dict_instanceNumber = {}
-        self.__dict_SOPInstanceUID = {}
-        self._imvector = None
-        self._maskvector = None
+        self.__slicedict_instanceNumber = {}
+        self.__slicedict_sliceLocation = {}
+        self.ROINames = []
+        self._imvector = None           # cache for precomputed image vector
+        self._maskvector = None         # cache for precomputed mask binary vector
         self.numberOfSlices = None
         self.rows = None
         self.columns = None
@@ -348,24 +350,25 @@ class imvolume():
         if (isinstance(slices, str)):
             # slices is a path to a directory containing a series of dicom files
             path = slices
-            self._fromDir(path, recursive=recursive)
+            self.__fromDir(path, recursive=recursive)
 
         elif (isinstance(slices, list)):
             # pass to constructor
-            self._fromSliceList(slices)
+            self.__fromSliceList(slices)
 
         else:
             print('must supply a list of imslices or a valid path to a dicom series')
             raise TypeError
 
         # pair mask slices with slices
-        self._pairMasks(maskvolume_dict)
+        self.ROINames = list(maskvolume_dict.keys())
+        self.__injectMaskSlices(maskvolume_dict)
 
         # store static vectorized voxel intensities
         self.__vectorize_static(ROIName)
 
 
-    def _fromDir(self, path, recursive=False):
+    def __fromDir(self, path, recursive=False):
         """constructor: takes path to directory containing dicom files and builds a list of imslices
 
         Args:
@@ -380,9 +383,9 @@ class imvolume():
             imslice_list.append(imslice(slice_dataset))
 
         # pass imslice list to constructor
-        self._fromSliceList(imslice_list)
+        self.__fromSliceList(imslice_list)
 
-    def _fromSliceList(self, slices):
+    def __fromSliceList(self, slices):
         """constructor: takes a list of imslices and builds imvolume object properties"""
         # check that all elements are valid slices, if not remove and continue
         nRemoved = 0
@@ -406,10 +409,10 @@ class imvolume():
         self.rescaleIntercept = slices[0].rescaleIntercept()
         # add slices to dicts
         for slice in slices:
-            self.__dict_instanceNumber[slice.instanceNumber()] = slice
-            self.__dict_SOPInstanceUID[slice.SOPInstanceUID()] = slice
+            self.__slicedict_instanceNumber[slice.instanceNumber()] = slice
+            self.__slicedict_sliceLocation[slice.sliceLocation()] = slice
 
-    def _pairMasks(self, maskvolume_dict):
+    def __injectMaskSlices(self, maskvolume_dict):
         """takes a dict of mask volumes and matches each slice in each volume with the corresponding
         imslice, storing its maskslice object to imslice.maskslice
 
@@ -422,39 +425,33 @@ class imvolume():
             # injection into slice.maskslice_dict
             maskslice_dict = {}
             for ROIName, thismaskvolume in maskvolume_dict.items():
-                for SOPInstanceUID, thismaskslice in thismaskvolume._dict_SOPInstanceUID.items():
-                    if (not SOPInstanceUID in maskslice_dict):
+                for thismaskslice in thismaskvolume.slicelist:
+                    sliceLocation = thismaskslice.sliceLocation()
+                    if (not sliceLocation in maskslice_dict):
                         #initialize value as empty dict, add to it for subequent matches of SOPInstanceUID
-                        maskslice_dict[SOPInstanceUID] = {}
+                        maskslice_dict[sliceLocation] = {}
                     else:
                         # add thismaskslice with SOPInstanceUID as value to underlying dict with key=ROIName
                         # result should be a dict of dicts where top level key is SOPInstanceUID and
                         # second level key is ROIName
                         # second level dict will be copied to imslice.maskslice_dict for use in masking tasks
                         # with ROI specification later on
-                        (maskslice_dict[SOPInstanceUID])[ROIName] = thismaskslice
+                        (maskslice_dict[sliceLocation])[ROIName] = thismaskslice
 
             #check output
-            for SOPInstanceUID, maskslice_dict_final in maskslice_dict.items():
-                print(str(SOPInstanceUID) + ' len: ' + str(len(maskslice_dict_final)))
+            '''
+            for sliceLocation, maskslice_dict_final in maskslice_dict.items():
+                print(str(sliceLocation) + ' len: ' + str(len(maskslice_dict_final)))
+            '''
 
             # store to imslice maskslice_dict for each slice in volume
-            for SOPInstanceUID, slice in self.__dict_SOPInstanceUID.items():
-                print(SOPInstanceUID)
-                print(slice._safeGetAttr('FrameOfReferenceUID'))
-                print(list(self.__dict_SOPInstanceUID.keys())[0])
-                if (SOPInstanceUID in maskslice_dict):
-                    print('storing')
-                    slice.maskslice_dict = maskslice_dict[SOPInstanceUID]
+            for sliceLocation, slice in self.__slicedict_sliceLocation.items():
+                if (sliceLocation in maskslice_dict):
+                    #print('storing')
+                    slice.maskslice_dict = maskslice_dict[sliceLocation]
                 else:
-                    print('nothing found here')
-
-            #check by grabbing random slice from this volume and printing the maskslice dict
-            for i in range(len(self.__dict_SOPInstanceUID.values())):
-                temp = list(self.__dict_SOPInstanceUID.values())[i]
-                if (len(temp.maskslice_dict.values()) > 0):
-                    print(temp.maskslice_dict)
-                    break
+                    #print('nothing found here')
+                    pass
 
 
     def _sliceList(self):
@@ -463,14 +460,14 @@ class imvolume():
         Returns:
             list<imslices>[self.numberOfSlices]
         """
-        if (len(self.__dict_instanceNumber) == len(self.__dict_SOPInstanceUID)):
-            return list(self.__dict_instanceNumber.values())
+        if (len(self.__slicedict_instanceNumber) == len(self.__slicedict_sliceLocation)):
+            return list(self.__slicedict_instanceNumber.values())
         else:
             print('ERROR: dictionaries do not match')
             raise Exception
 
-    def getSlice(self, ID, asdataset=False, mask=False, rescale=False, vectorize=False):
-        """takes ID as SOPInstanceUID[string] or InstanceNumber[int] and returns a numpy ndarray or\
+    def getSlice(self, ID, asdataset=False, mask=False, ROIName=None, rescale=False, vectorize=False):
+        """takes ID as sliceLocation[float] or InstanceNumber[int] and returns a numpy ndarray or\
                 the dataset object
 
         Args:
@@ -483,25 +480,18 @@ class imvolume():
                             pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
             vectorize  -- return a 1darray in row-major order
         """
-        if (isinstance(ID, str)):
-            # check SOPInstanceUID dict for existence
-            __dict = self.__dict_SOPInstanceUID
-        elif (isinstance(ID, int)):
-            # check instanceNumber dict for existence
-            __dict = self.__dict_instanceNumber
-        else:
-            print('invalid type: "{:s}". ID must be a "str" or "int"'.format(str(type(ID))))
-            raise TypeError
+        # get the appropriate dict
+        slicedict = self.__select_slicedict(ID)
 
         # check for existence
-        if (not ID in __dict):
+        if (not ID in slicedict):
             print('ID: "{:s}" not found in volume'.format(str(ID)))
             raise KeyError
 
         if (asdataset):
-            return __dict[ID]
+            return slicedict[ID]
         else:
-            return __dict[ID].pixelData(mask=mask, rescale=rescale, vectorize=vectorize)
+            return slicedict[ID].pixelData(mask=mask, ROIName=ROIName, rescale=rescale, vectorize=vectorize)
 
 
     def sortedSliceList(self, sortkey='sliceLocation', ascend=True):
@@ -531,7 +521,10 @@ class imvolume():
         for slice in self.sortedSliceList(sortkey='sliceLocation', ascend=True):
             vect_list.append(slice.pixelData(vectorize=True))
             if (slice.maskslice_dict is not None and len(slice.maskslice_dict) > 0):
-                mask_list.append(slice.maskslice_dict[ROIName])
+                if (ROIName in slice.maskslice_dict):
+                    mask_list.append(slice.maskslice_dict[ROIName])
+                else:
+                    mask_list.append(np.zeros((self.rows, self.columns)))
         self._imvector = np.vstack(vect_list)
         if (len(mask_list) > 0):
             self._maskvector = np.vstack(mask_list)
@@ -562,12 +555,61 @@ class imvolume():
         # MASK
         if (mask):
             if (not self.mask is None):
-                vect = np.multiply(vect, self.mask)
+                vect = np.multiply(vect, self._maskvector)
                 print('image mask applied')
             else:
                 print('No mask has been defined. returning unmasked data')
 
         return vect
+
+    def getMaskSlice(self, ID, asdataset=False, ROIName=None, vectorize=False):
+        """get the binary mask associated with slice[ID] and ROIName
+
+        Args:
+            ID        -- can be the sliceLocation or instanceNumber
+        
+        Optional Args:
+            asdataset -- returnt the maskslice object
+            ROIName   -- string referencing an ROI. if None, the first available ROI will be used
+            vectorize -- return the maskslice as a flattened vector?
+        """
+        # get the appropriate dict
+        slicedict = self.__select_slicedict(ID)
+        # check for existence
+        if (not ID in slicedict):
+            print('ID: "{:s}" not found in volume'.format(str(ID)))
+            raise KeyError
+
+        thisslice = slicedict[ID]
+        if (asdataset):
+            if (ROIName not in thisslice):
+                print('contour named: "{name:s}" not found. no mask applied'.format(name=ROIName))
+                raise KeyError
+            else:
+                thismask = thisslice.maskslice_dict[ROIName]
+        else:
+            thismask = thisslice.makeDenseMaskSlice(ROIName)
+
+        # vectorize
+        if (vectorize):
+            thismask = thismask.flatten(order='C').reshape((-1, 1), order='C')
+
+        return thismask
+
+
+    def __select_slicedict(self, ID):
+        """checks slicedicts for the one that will provide meaningful results for key=ID"""
+        if (ID in self.__slicedict_instanceNumber):
+            # check SOPInstanceUID dict for existence
+            slicedict = self.__slicedict_instanceNumber
+        elif (ID in self.__slicedict_sliceLocation):
+            # check instanceNumber dict for existence
+            slicedict = self.__slicedict_sliceLocation
+        else:
+            print('invalid type: "{:s}". ID must be a "float" or "int"'.format(str(type(ID))))
+            raise TypeError
+        return slicedict
+
 
     def get_val(self, z, y, x, mask=False):
         """returns the voxel intensity from the static vectorized image at a location
