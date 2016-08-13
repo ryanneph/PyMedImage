@@ -51,7 +51,7 @@ class imslice():
             return self._dataset.data_element(tag).value
 
 
-    def pixelData(self, mask=False, ROIName=None, rescale=False, vectorize=False):
+    def pixelData(self, mask=False, ROIName=None, rescale=False, vectorize=False, verbose=False):
         """get numpy ndarray of pixel intensities.
 
         Optional Args:
@@ -85,7 +85,8 @@ class imslice():
                 self.__densemaskslice_ROIName = ROIName
 
             pixel_data = np.multiply(pixel_data, thisdensemaskslice)
-            print('image mask applied')
+            if verbose:
+                print('image mask applied')
 
         # VECTORIZE
         if (vectorize):
@@ -94,7 +95,7 @@ class imslice():
 
         return pixel_data
 
-    def makeDenseMaskSlice(self, ROIName):
+    def makeDenseMaskSlice(self, ROIName, vectorize=False, verbose=False):
         """use slice size and location info to construct dense binary mask based on the contour points
         defined in ROIName
         """
@@ -102,9 +103,11 @@ class imslice():
         if (ROIName is None):
             #use first contour
             ROIName = list(self.maskslice_dict.keys())[0]
-            print("masking with default contour ({:s})".format(ROIName))
+            if verbose:
+                print("masking with default contour ({:s})".format(ROIName))
         if (ROIName not in self.maskslice_dict):
-            print('contour named: "{name:s}" not found. no mask applied'.format(name=ROIName))
+            if verbose:
+                print('contour named: "{name:s}" not found. no mask applied'.format(name=ROIName))
             return np.ones((self.rows(), self.columns()))
         slice = self.maskslice_dict[ROIName]
 
@@ -128,7 +131,14 @@ class imslice():
         del imdraw
 
         # convert from PIL image to np.ndarray and threshold to binary
-        return np.array(im.getdata()).reshape((im.size[0], im.size[1]))
+        thisdensemask = np.array(im.getdata()).reshape((im.size[0], im.size[1]))
+
+        # VECTORIZE
+        if vectorize:
+            thisdensemask = thisdensemask.flatten(order='C').reshape((-1, 1), order='C')
+
+        return thisdensemask
+
 
     def sliceThickness(self):
         """gets thickness of this slice in mm
@@ -176,7 +186,7 @@ class imslice():
         Returns:
             float
         """
-        if ('NumberOfSlices' in self.dataset.dir()):
+        if ('NumberOfSlices' in self._dataset.dir()):
             return self._safeGetAttr('NumberOfSlices')
         else:
             print('# slices not defined for this image series')
@@ -337,8 +347,9 @@ class imvolume():
         self.__slicedict_instanceNumber = {}
         self.__slicedict_sliceLocation = {}
         self.ROINames = []
-        self._imvector = None           # cache for precomputed image vector
+        self._vector = None           # cache for precomputed image vector
         self._maskvector = None         # cache for precomputed mask binary vector
+        self.__cache_lastROIName = None
         self.numberOfSlices = None
         self.rows = None
         self.columns = None
@@ -346,6 +357,9 @@ class imvolume():
         self.seriesInstanceUID = None
         self.rescaleSlope = None
         self.rescaleIntercept = None
+        self.imagePositionPatient = None
+        self.pixelSpacing = None
+        self.sliceThickness = None
 
         if (isinstance(slices, str)):
             # slices is a path to a directory containing a series of dicom files
@@ -407,6 +421,9 @@ class imvolume():
         self.seriesInstanceUID = slices[0].seriesInstanceUID()
         self.rescaleSlope = slices[0].rescaleSlope()
         self.rescaleIntercept = slices[0].rescaleIntercept()
+        self.imagePositionPatient = slices[0].imagePositionPatient()
+        self.pixelSpacing = slices[0].pixelSpacing()
+        self.sliceThickness = slices[0].sliceThickness()
         # add slices to dicts
         for slice in slices:
             self.__slicedict_instanceNumber[slice.instanceNumber()] = slice
@@ -506,7 +523,7 @@ class imvolume():
         """
         return sorted(self._sliceList(), key=methodcaller(sortkey), reverse=(not ascend))
 
-    def __vectorize_static(self, ROIName):
+    def __vectorize_static(self, ROIName, onlymask=False):
         """constructs vector (np 1darray) of all contained imslices and corresponding mask vector (if masks are available)
 
         Shape will be (numberOfSlices*rows*colums, 1)
@@ -519,18 +536,20 @@ class imvolume():
         vect_list = []
         mask_list = []
         for slice in self.sortedSliceList(sortkey='sliceLocation', ascend=True):
-            vect_list.append(slice.pixelData(vectorize=True))
+            if (not onlymask):
+                vect_list.append(slice.pixelData(vectorize=True))
             if (slice.maskslice_dict is not None and len(slice.maskslice_dict) > 0):
                 if (ROIName in slice.maskslice_dict):
-                    mask_list.append(slice.maskslice_dict[ROIName])
+                    mask_list.append(slice.makeDenseMaskSlice(ROIName, vectorize=True))
                 else:
-                    mask_list.append(np.zeros((self.rows, self.columns)))
-        self._imvector = np.vstack(vect_list)
+                    mask_list.append(np.zeros((slice.rows()*slice.columns(),1)))
+        if (not onlymask):
+            self._vector = np.vstack(vect_list)
         if (len(mask_list) > 0):
             self._maskvector = np.vstack(mask_list)
+            self.__cache_lastROIName = ROIName
 
-
-    def vectorize(self, mask=False, rescale=False):
+    def vectorize(self, mask=False, rescale=False, verbose=False):
         """Apply mask and rescale options to vectorized voxel intensities from slices in the volume
 
         Shape will be (numberOfSlices*rows*colums, 1)
@@ -543,26 +562,29 @@ class imvolume():
         Returns:
             np.ndarray of shape (numberOfSlices*rows*colums, 1)
         """
-        vect = self._imvector
+        vect = self._vector
 
         # RESCALE
         if (rescale):
             f = float(self.rescaleSlope())
             i = float(self.rescaleIntercept())
             vect = np.add(np.multiply(vect, f), i)
-            print('data rescaled using: ({f:0.3f} * data[i]) + {i:0.3f}'.format(f=f, i=i) )
+            if verbose:
+                print('data rescaled using: ({f:0.3f} * data[i]) + {i:0.3f}'.format(f=f, i=i) )
 
         # MASK
         if (mask):
             if (not self.mask is None):
                 vect = np.multiply(vect, self._maskvector)
-                print('image mask applied')
+                if verbose:
+                    print('image mask applied')
             else:
-                print('No mask has been defined. returning unmasked data')
+                if verbose:
+                    print('No mask has been defined. returning unmasked data')
 
         return vect
 
-    def getMaskSlice(self, ID, asdataset=False, ROIName=None, vectorize=False):
+    def getMaskSlice(self, ID, asdataset=False, ROIName=None, vectorize=False, verbose=False):
         """get the binary mask associated with slice[ID] and ROIName
 
         Args:
@@ -582,9 +604,10 @@ class imvolume():
 
         thisslice = slicedict[ID]
         if (asdataset):
-            if (ROIName not in thisslice):
-                print('contour named: "{name:s}" not found. no mask applied'.format(name=ROIName))
-                raise KeyError
+            if (ROIName not in thisslice.maskslice_dict):
+                if verbose:
+                    print('contour named: "{name:s}" not found. no mask applied'.format(name=ROIName))
+                thismask = None
             else:
                 thismask = thisslice.maskslice_dict[ROIName]
         else:
@@ -611,7 +634,7 @@ class imvolume():
         return slicedict
 
 
-    def get_val(self, z, y, x, mask=False):
+    def get_val(self, z, y, x, ROIName=None):
         """returns the voxel intensity from the static vectorized image at a location
 
         Uses depth-row major ordering:
@@ -626,11 +649,37 @@ class imvolume():
             return 0
         else:
             pos = r*c*z + c*y + x
-            return self._imvector[pos] * self._maskvector[pos] if mask else 1
+            if (ROIName is not None):
+                # ensure whole volume has proper mask applied to cached _maskvector
+                if (not ROIName == self.__cache_lastROIName):
+                    print('Performing costly mask vectorization for image volume')
+                    self.__vectorize_static(ROIName=ROIName, onlymask=True)
+                return np.asscalar(self._vector[pos] * self._maskvector[pos])
+            else:
+                return np.asscalar(self._vector[pos])
 
 
-def featvolume():
-    def __init__(self, shape):
+class featvolume():
+    def __init__(self, input, fromarray=False):
+        """pass execution based on what is used to initialize"""
+        self._vector = None
+        self.rows = None
+        self.columns = None
+        self.numberOfSlices = None
+        if (fromarray):
+            self.fromArray(input)
+        else:
+            self.zeros(input)
+
+    def fromArray(self, array):
+        """initialize with values in array)"""
+        self._vector = array.flatten(order='C').reshape((-1, 1))
+        self.numberOfSlices = array.shape[0]
+        self.rows = array.shape[1]
+        self.columns = array.shape[2]
+        return self
+
+    def zeros(self, shape):
         """initialize an empty feature volume of shape specified
 
         Args:
@@ -646,6 +695,7 @@ def featvolume():
             self.columns = shape[2]
 
         self._vector = np.zeros((self.numberOfSlices * self.rows * self.columns, 1))
+        return self
 
     def get_val(self, z, y, x):
         """convenience function for returning vector intensity at location
@@ -694,13 +744,13 @@ def featvolume():
         # perform index bounding
         if axis==1:
             idx = 0 if (idx < 0) else (self.rows-1 if idx >= self.rows else idx)
-            slice = self.array.reshape((self.numberOfSlices, self.rows, self.columns))[:, idx, :]
+            slice = self._vector.reshape((self.numberOfSlices, self.rows, self.columns))[:, idx, :]
         elif axis==2:
             idx = 0 if (idx < 0) else (self.columns-1 if idx >= self.columns else idx)
-            slice = self.array.reshape((self.numberOfSlices, self.rows, self.columns))[:, :, idx]
+            slice = self._vector.reshape((self.numberOfSlices, self.rows, self.columns))[:, :, idx]
         else:
-            idx = 0 if (idx < 0) else (self.numberOfSlices-1 if idx >= self.depth else idx)
-            slice = self.array.reshape((self.numberOfSlices, self.rows, self.columns))[idx, :, :]
+            idx = 0 if (idx < 0) else (self.numberOfSlices-1 if idx >= self.numberOfSlices else idx)
+            slice = self._vector.reshape((self.numberOfSlices, self.rows, self.columns))[idx, :, :]
 
         if vectorize:
             slice = slice.flatten()

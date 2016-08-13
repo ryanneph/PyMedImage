@@ -7,6 +7,7 @@ import os, sys
 import pickle
 from utils.rttypes import *
 from utils.logging import print_indent, g_indents
+from utils import features
 
 def loadImages(images_path, modalities, rtstruct_path=None):
     """takes a list of modality strings and loads dicoms into an imvolume dataset from images_path
@@ -110,7 +111,8 @@ def loadMaskVolumes(rtstruct_path):
         print('path invalid: "{:s}"'.format(str(rtstruct_path)))
         return None
 
-def loadEntropy(entropy_pickle_path, image_volumes, radius=4, savePickle=True, verbose=False):
+def loadEntropy(entropy_pickle_path, image_volumes, mask=False, ROIName=None, radius=4,
+        savePickle=True, verbose=False):
     """Checks if entropy vector has already been pickled at path specified and
     loads the files if so, or computes entropy for each modality and pickles for later access.
     Returns tuple of entropy imvectors (CT_entropy, PET_entropy)
@@ -173,7 +175,8 @@ def loadEntropy(entropy_pickle_path, image_volumes, radius=4, savePickle=True, v
                 image_volume = image_volumes[mod]
                 if image_volume is not None:
                     print_indent('Computing entropy now...'.format(mod=mod),l2_indent)
-                    entropy_volumes[mod] = features.image_entropy(image_volume, radius, verbose)
+                    entropy_volumes[mod] = features.image_entropy(image_volume, mask=mask, ROIName=ROIName,
+                            radius=radius, verbose=verbose)
                     if entropy_volumes[mod] is None:
                         print_indent('Failed to compute entropy for {mod:s} images.'.format(
                             mod=mod.upper()),l2_indent)
