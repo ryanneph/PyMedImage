@@ -3,12 +3,14 @@
 Contains datatype definitions necessary for working with Dicom volumes, slices, and contours[masks]
 """
 
+import os, sys
 import numpy as np
 import PIL
 from PIL.ImageDraw import Draw
 import dicom # pydicom
 from utils import dcmio
 from operator import attrgetter, methodcaller
+import pickle
 
 from itertools import zip_longest
 def grouper(n, iterable, fillvalue=None):
@@ -336,6 +338,13 @@ class maskvolume():
             raise ValueError
 
 
+class BaseVolume():
+    """Contains basic volume functionality including storage and vectorization of image slices"""
+    def __init__():
+        # class members
+        self.__slicedict_instanceNumber = {}
+        self.__slicedict_sliceLocation = {}
+
 class imvolume():
     """Data container for a dicom series instance containing a set of imslices
 
@@ -660,16 +669,17 @@ class imvolume():
 
 
 class featvolume():
-    def __init__(self, input, fromarray=False):
+    def __init__(self, input=None, fromarray=False):
         """pass execution based on what is used to initialize"""
         self._vector = None
         self.rows = None
         self.columns = None
         self.numberOfSlices = None
-        if (fromarray):
-            self.fromArray(input)
-        else:
-            self.zeros(input)
+        if (not input is None):
+            if (fromarray):
+                self.fromArray(input)
+            else:
+                self.zeros(input)
 
     def fromArray(self, array):
         """initialize with values in array)"""
@@ -696,6 +706,35 @@ class featvolume():
 
         self._vector = np.zeros((self.numberOfSlices * self.rows * self.columns, 1))
         return self
+
+    def fromPickle(self, pickle_path):
+        """import unchanging dataformat for storing entropy calculation results
+
+        When the definition of this class changes, we can still import old pickle files
+        """
+        if (not os.path.exists(pickle_path)):
+            print('file at path: {:s} doesn\'t exists'.format(pickle_path))
+        with open(pickle_path, 'rb') as p:
+            feature_pickle = pickle.load(p)
+
+        #import data to this object
+        self._vector = feature_pickle.datavector
+        self.numberOfSlices = feature_pickle.depth
+        self.rows = feature_pickle.rows
+        self.columns = feature_pickle.columns
+        return self
+
+    def toPickle(self, pickle_path):
+        """store critical data to unchanging format that can be pickled long term
+        """
+        feature_pickle = featpickle()
+        feature_pickle.datavector = self._vector
+        feature_pickle.depth = self.numberOfSlices
+        feature_pickle.rows = self.rows
+        feature_pickle.columns = self.columns
+
+        with open(pickle_path, 'wb') as p:
+            pickle.dump(feature_pickle, p)
 
     def get_val(self, z, y, x):
         """convenience function for returning vector intensity at location
@@ -760,3 +799,11 @@ class featvolume():
         """consistency method returning the vectorized voxels in the feature volume
         """
         return self._vector
+
+
+class featpickle():
+    def __init__(self):
+        self.datavector = None
+        self.depth = None
+        self.rows = None
+        self.columns = None

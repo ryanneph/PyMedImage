@@ -20,7 +20,7 @@ pycuda.compiler.DEFAULT_NVCC_FLAGS = ['--std=c++11']
 l3 = g_indents[3]
 l4 = g_indents[4]
 
-def image_entropy(image_volume, radius=2, mask=False, ROIName=None, verbose=False):
+def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
     """compute the pixel-wise entropy of an image over a region defined by neighborhood
     
     Args:
@@ -39,8 +39,8 @@ def image_entropy(image_volume, radius=2, mask=False, ROIName=None, verbose=Fals
         def get_val(image_volume, z, y, x):
             # image boundary handling is built into imvector.get_val
             return image_volume.get_val(z,y,x, ROIName=ROIName)
-        def set_val(image_volume, z, y, x, val):
-            image_volume.set_val(z,y,x,val)
+        def set_val(feature_volume, z, y, x, val):
+            feature_volume.set_val(z,y,x,val)
 
         #instantiate a blank imvector of the proper size
         H = featvolume((d, r, c))
@@ -80,7 +80,7 @@ def image_entropy(image_volume, radius=2, mask=False, ROIName=None, verbose=Fals
     start_entropy_calc = time.time()
 
     # crop to ROI then expand to image size with fill 0 later
-    if (mask):
+    if (ROIName is not None):
         global_limits = {'xmax': -4000,
                          'ymax': -4000,
                          'zmax': -4000,
@@ -127,7 +127,7 @@ def image_entropy(image_volume, radius=2, mask=False, ROIName=None, verbose=Fals
         cstart = 0
         cstop = c
 
-    print('calculation subset volume z=({zstart:d}->{zstop:d}), '
+    print_indent('calculation subset volume z=({zstart:d}->{zstop:d}), '
                                     'y=({ystart:d}->{ystop:d}), '
                                     'x=({xstart:d}->{xstop:d})'.format(
                                         zstart=dstart,
@@ -135,13 +135,13 @@ def image_entropy(image_volume, radius=2, mask=False, ROIName=None, verbose=Fals
                                         ystart=rstart,
                                         ystop=rstop,
                                         xstart=cstart,
-                                        xstop=cstop ) )
+                                        xstop=cstop ), l4)
     # nested loop approach -> slowest, try GPU next
     idx = -1
     total_voxels = d * r * c
     subset_idx = -1
     subset_total_voxels = (dstop-dstart+1) * (cstop-cstart+1) * (rstop-rstart+1)
-    onepercent = subset_total_voxels / 100
+    onepercent = round(subset_total_voxels / 100)
     fivepercent = 5*onepercent
     for z in range(d):
         for y in range(r):
@@ -179,6 +179,11 @@ def image_entropy(image_volume, radius=2, mask=False, ROIName=None, verbose=Fals
                     # calculate local entropy
                     h = -np.sum(val_probs*np.log(val_probs)) #/ np.log(65536)
                     set_val(H, z, y, x, h)
+                   #print('entropy at ({x:d}, {y:d}, {z:d})= {e:f}'.format(
+                   #    x=z*y*x + y*x + x,
+                   #    y=z*y*x + y,
+                   #    z=z*y*x,
+                   #    e=h))
     if isinstance(image_volume, np.ndarray) and d == 1:
         # need to reshape ndarray if input was 2d
         H = H.reshape((r, c))

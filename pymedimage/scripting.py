@@ -153,15 +153,20 @@ def loadEntropy(entropy_pickle_path, image_volumes, mask=False, ROIName=None, ra
             # initialize to None
             entropy_volumes[mod] = None
             # find first pickle that matches modality string or compute entropy fresh for that modality
-            match = next((f for f in files if mod in f.lower()), None) # gets first match and stops
+            if (ROIName is not None):
+                # match with modality and ROIName
+                match = next((f for f in files if (mod in f.lower() and ROIName.lower() in f.lower())), None) # gets first match and stops
+            else:
+                # match with modality
+                match = next((f for f in files if (mod in f.lower()) ), None) # gets first match and stops
             if (match is not None):
                 # found pickled entropy vector, load it and add to dict
                 print_indent('Pickled entropy vector found ({mod:s}). Loading.'.format(mod=mod),l2_indent)
                 try:
-                    with open(os.path.join(entropy_pickle_path, match), 'rb') as p:
-                        entropy_volumes[mod] = pickle.load(p)
+                    path = os.path.join(entropy_pickle_path, match)
+                    entropy_volumes[mod] = featvolume().fromPickle(path)
                 except:
-                    print_indent('there was a problem loading the file: {path:s}'.format(path=p),l2_indent)
+                    print_indent('there was a problem loading the file: {path:s}'.format(path=path),l2_indent)
                     entropy_volumes[mod] = None
                 else:
                     print_indent('Pickled {mod:s} entropy vector loaded successfully.'.format(
@@ -175,7 +180,7 @@ def loadEntropy(entropy_pickle_path, image_volumes, mask=False, ROIName=None, ra
                 image_volume = image_volumes[mod]
                 if image_volume is not None:
                     print_indent('Computing entropy now...'.format(mod=mod),l2_indent)
-                    entropy_volumes[mod] = features.image_entropy(image_volume, mask=mask, ROIName=ROIName,
+                    entropy_volumes[mod] = features.image_entropy(image_volume, ROIName=ROIName,
                             radius=radius, verbose=verbose)
                     if entropy_volumes[mod] is None:
                         print_indent('Failed to compute entropy for {mod:s} images.'.format(
@@ -183,11 +188,16 @@ def loadEntropy(entropy_pickle_path, image_volumes, mask=False, ROIName=None, ra
                     else:
                         print_indent('Entropy computed successfully',l2_indent)
                         # pickle for later recall
-                        try:
+                        if (ROIName is not None):
+                            # append ROIName to pickle path
                             pickle_dump_path = os.path.join(entropy_pickle_path,
-                                                            '{mod:s}_entropy.pickle'.format(mod=mod))
-                            with open(pickle_dump_path, 'wb') as p:
-                                pickle.dump(entropy_volumes[mod], p)
+                                '{mod:s}_mask_{roiname:s}_entropy.pickle'.format(mod=mod, roiname=ROIName))
+                        else:
+                            # dont append roiname to pickle path
+                            pickle_dump_path = os.path.join(entropy_pickle_path,
+                                '{mod:s}_entropy.pickle'.format(mod=mod, roiname=ROIName))
+                        try:
+                            entropy_volumes[mod].toPickle(pickle_dump_path)
                         except:
                             print_indent('error pickling: {:s}'.format(pickle_dump_path),l2_indent)
                         else:
