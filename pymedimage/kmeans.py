@@ -24,24 +24,24 @@ def create_feature_vector(features):
         #TODO - REGISTRATION
 
         # take the first feature vectors shape to be the reference
-        ref_shape = features[0]._vector.shape
+        ref_shape = features[0].vectorize().shape
         N = ref_shape[0]
 
         # initialize array with first feature
-        feature_array = features[0]._vector.reshape(N, 1)
+        feature_array = features[0].vectorize().reshape(N, 1)
 
         if len(features) >= 1:
             for i, feat in enumerate(features[1:]):
-                if (feat is None or feat._vector.shape != ref_shape):
+                if (feat is None or feat.vectorize().shape != ref_shape):
                     print_indent('shape mismatch. ref={ref:s} != feature[{num:d}]={shape:s}'.format(
                         ref=str(ref_shape),
                         num=i,
-                        shape=str(feat._vector.shape))
+                        shape=str(feat.vectorize().shape))
                         , g_indents[1])
                     continue
                 else:
                     # concatenate, need to make feat.array a 2d vector
-                    feature_array = np.concatenate((feature_array, feat._vector.reshape(-1, 1)), axis=1)
+                    feature_array = np.concatenate((feature_array, feat.vectorize().reshape(-1, 1)), axis=1)
 
         print_indent('combined {n:d} features into array of shape: {shape:s}'.format(
             n=feature_array.shape[1],

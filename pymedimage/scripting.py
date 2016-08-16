@@ -42,7 +42,7 @@ def loadImages(images_path, modalities, rtstruct_path=None):
                     # read maskslices from dicom rtstruct file
                     maskvolume_dict = loadMaskVolumes(rtstruct_path)
                     # recursively walk modality path for dicom images, and build a dataset from it
-                    volumes[mod] = imvolume(dicom_path, recursive=True, maskvolume_dict=maskvolume_dict)
+                    volumes[mod] = MaskableVolume(dicom_path, recursive=True, maskvolume_dict=maskvolume_dict)
                     volume = volumes[mod]
                     if (volume is not None):
                         print_indent('stacked {len:d} datasets of shape: ({d:d}, {r:d}, {c:d})'.format(
@@ -111,7 +111,7 @@ def loadMaskVolumes(rtstruct_path):
         print('path invalid: "{:s}"'.format(str(rtstruct_path)))
         return None
 
-def loadEntropy(entropy_pickle_path, image_volumes, mask=False, ROIName=None, radius=4,
+def loadEntropy(entropy_pickle_path, image_volumes, ROIName=None, radius=4,
         savePickle=True, verbose=False):
     """Checks if entropy vector has already been pickled at path specified and
     loads the files if so, or computes entropy for each modality and pickles for later access.
@@ -164,7 +164,7 @@ def loadEntropy(entropy_pickle_path, image_volumes, mask=False, ROIName=None, ra
                 print_indent('Pickled entropy vector found ({mod:s}). Loading.'.format(mod=mod),l2_indent)
                 try:
                     path = os.path.join(entropy_pickle_path, match)
-                    entropy_volumes[mod] = featvolume().fromPickle(path)
+                    entropy_volumes[mod] = FeatureVolume().fromPickle(path)
                 except:
                     print_indent('there was a problem loading the file: {path:s}'.format(path=path),l2_indent)
                     entropy_volumes[mod] = None

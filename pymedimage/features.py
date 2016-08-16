@@ -7,7 +7,7 @@ import numpy as np
 from utils.logging import print_indent, g_indents, print_timer
 import utils
 from utils import rttypes
-from utils.rttypes import imvolume as imvolume, featvolume as featvolume
+from utils.rttypes import MaskableVolume as MaskableVolume, FeatureVolume as FeatureVolume
 import time
 import sys
 import pycuda.autoinit
@@ -27,9 +27,9 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
         image -- a flattened array of pixel intensities of type imslice or a matrix shaped numpy ndarray
         radius -- describes neighborood size in each dimension. radius of 4 would be a 9x9x9
     Returns:
-        H as imvolume with shape=image.shape
+        H as MaskableVolume with shape=image.shape
     """
-    if True or type(image_volume) == 'utils.rttypes.imvolume':
+    if True or type(image_volume) == 'utils.rttypes.MaskableVolume':
         d = image_volume.numberOfSlices
         r = image_volume.rows
         c = image_volume.columns
@@ -43,7 +43,7 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
             feature_volume.set_val(z,y,x,val)
 
         #instantiate a blank imvector of the proper size
-        H = featvolume((d, r, c))
+        H = FeatureVolume().fromZeros((d, r, c))
     elif isinstance(image_volume, np.ndarray):
         if image_volume.ndim == 3:
             d, r, c = image_volume.shape
