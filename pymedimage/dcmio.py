@@ -10,8 +10,7 @@ import sys
 import pickle
 import dicom # pydicom
 import numpy as np
-from utils import rttypes, features
-from utils.logging import print_indent, g_indents
+from .logging import print_indent, g_indents
 from string import Template
 
 

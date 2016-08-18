@@ -4,15 +4,12 @@ features.py
 Utility functions for calculating common image features
 """
 import numpy as np
-from utils.logging import print_indent, g_indents, print_timer
-import utils
-from utils import rttypes
-from utils.rttypes import MaskableVolume as MaskableVolume, FeatureVolume as FeatureVolume
+from .rttypes import *
+from .logging import *
 import time
 import sys
 import pycuda.autoinit
 import pycuda.driver as cuda
-import pycuda.compiler
 from pycuda.compiler import SourceModule
 pycuda.compiler.DEFAULT_NVCC_FLAGS = ['--std=c++11']
 
@@ -29,7 +26,7 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
     Returns:
         H as MaskableVolume with shape=image.shape
     """
-    if True or type(image_volume) == 'utils.rttypes.MaskableVolume':
+    if (MaskableVolume.__name__ in str(type(image_volume))): # This is an ugly way of type-checking but cant get isinstance to see both as the same
         d = image_volume.numberOfSlices
         r = image_volume.rows
         c = image_volume.columns
@@ -37,12 +34,12 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
         #prepare mask vector within image_volume
 
         def get_val(image_volume, z, y, x):
-            # image boundary handling is built into imvector.get_val
-            return image_volume.get_val(z,y,x, ROIName=ROIName)
+            # image boundary handling is built into BaseVolume.get_val
+            return image_volume.get_val(z,y,x)
         def set_val(feature_volume, z, y, x, val):
             feature_volume.set_val(z,y,x,val)
 
-        #instantiate a blank imvector of the proper size
+        #instantiate a blank BaseVolume of the proper size
         H = FeatureVolume().fromZeros((d, r, c))
     elif isinstance(image_volume, np.ndarray):
         if image_volume.ndim == 3:
@@ -62,7 +59,7 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
         def set_val(image, z, y ,x, val):
             image[z, y, x] = val
     else:
-        print('invalid image type supplied ({:s}). Please specify an image of type imvector \
+        print('invalid image type supplied ({:s}). Please specify an image of type BaseVolume \
             or type np.ndarray'.format(str(type(image_volume))))
         return None
 
@@ -79,53 +76,14 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
     # timing
     start_entropy_calc = time.time()
 
-    # crop to ROI then expand to image size with fill 0 later
-    if (ROIName is not None):
-        global_limits = {'xmax': -4000,
-                         'ymax': -4000,
-                         'zmax': -4000,
-                         'xmin': 4000,
-                         'ymin': 4000,
-                         'zmin': 4000 }
-        for i in range(1, image_volume.numberOfSlices+1):
-            maskds = image_volume.getMaskSlice(i, asdataset=True, ROIName=ROIName, vectorize=False)
-            if maskds is None:
-                continue
-            #convert coords list to ndarray
-            coords = np.array(maskds.contour_points)
-            (xmin, ymin, zmin) = tuple(coords.min(axis=0, keepdims=False))
-            (xmax, ymax, zmax) = tuple(coords.max(axis=0, keepdims=False))
-
-            #update limits
-            if xmin < global_limits['xmin']:
-                global_limits['xmin'] = xmin
-            if ymin < global_limits['ymin']:
-                global_limits['ymin'] = ymin
-            if zmin < global_limits['zmin']:
-                global_limits['zmin'] = zmin
-            if xmax > global_limits['xmax']:
-                global_limits['xmax'] = xmax
-            if ymax > global_limits['ymax']:
-                global_limits['ymax'] = ymax
-            if zmax > global_limits['zmax']:
-                global_limits['zmax'] = zmax
-
-        (x_rel_start, y_rel_start, z_rel_start) = image_volume.imagePositionPatient
-        (y_space, x_space) = image_volume.pixelSpacing
-        z_space = image_volume.sliceThickness
-        dstart = int(round((global_limits['zmin']-z_rel_start)/z_space))
-        dstop = int(round((global_limits['zmax']-z_rel_start)/z_space))
-        rstart = int(round((global_limits['ymin']-y_rel_start)/y_space))
-        rstop = int(round((global_limits['ymax']-y_rel_start)/y_space))
-        cstart = int(round((global_limits['xmin']-x_rel_start)/x_space))
-        cstop = int(round((global_limits['xmax']-x_rel_start)/x_space))
-    else:
-        dstart = 0
-        dstop = d
-        rstart = 0
-        rstop = r
-        cstart = 0
-        cstop = c
+    # get max extents of the mask/ROI to speed up calculation only within ROI cubic volume
+    extents = image_volume.getMaskExtents(ROIName, padding=0)
+    dstart = extents['zmin']
+    dstop = extents['zmax']
+    rstart = extents['ymin']
+    rstop = extents['ymax']
+    cstart = extents['xmin']
+    cstop = extents['xmax']
 
     print_indent('calculation subset volume z=({zstart:d}->{zstop:d}), '
                                     'y=({ystart:d}->{ystop:d}), '
@@ -139,7 +97,7 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
     # nested loop approach -> slowest, try GPU next
     idx = -1
     total_voxels = d * r * c
-    subset_idx = -1
+    subset_idx = 0
     subset_total_voxels = (dstop-dstart+1) * (cstop-cstart+1) * (rstop-rstart+1)
     onepercent = round(subset_total_voxels / 100)
     fivepercent = 5*onepercent
@@ -179,11 +137,14 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
                     # calculate local entropy
                     h = -np.sum(val_probs*np.log(val_probs)) #/ np.log(65536)
                     set_val(H, z, y, x, h)
-                   #print('entropy at ({x:d}, {y:d}, {z:d})= {e:f}'.format(
-                   #    x=z*y*x + y*x + x,
-                   #    y=z*y*x + y,
-                   #    z=z*y*x,
-                   #    e=h))
+                    if (False and verbose and (subset_idx % onepercent == 0 or subset_idx == subset_total_voxels-1)):
+                        print('total counts: ' + str(total_counts))
+                        print('val_probs = ' + str(val_probs))
+                        print('entropy at ({x:d}, {y:d}, {z:d})= {e:f}'.format(
+                            x=z*y*x + y*x + x,
+                            y=z*y*x + y,
+                            z=z*y*x,
+                            e=h))
     if isinstance(image_volume, np.ndarray) and d == 1:
         # need to reshape ndarray if input was 2d
         H = H.reshape((r, c))
@@ -240,7 +201,7 @@ def image_entropy_gpu(image_vect, radius=2):
         elif image_vect.ndim == 2:
             d, r, c = (1, *image_vect.shape)
         image = image_vect.flatten()
-    elif isinstance(image_vect, imvector):
+    elif isinstance(image_vect, BaseVolume):
         d = image_vect.depth
         r = image_vect.rows
         c = image_vect.columns

@@ -5,12 +5,12 @@ Contains datatype definitions necessary for working with Dicom volumes, slices, 
 
 import os, sys
 import numpy as np
-import PIL
-from PIL.ImageDraw import Draw
 import dicom # pydicom
-from utils import dcmio
+from . import dcmio
 from operator import attrgetter, methodcaller
 import pickle
+import PIL
+from PIL.ImageDraw import Draw
 
 from itertools import zip_longest
 def grouper(n, iterable, fillvalue=None):
@@ -18,7 +18,7 @@ def grouper(n, iterable, fillvalue=None):
     args = [iter(iterable)] * n
     return zip_longest(fillvalue=fillvalue, *args)
 
-class imslice():
+class imslice:
     """Data type for a single dicom slice
 
     Contains the dicom file dataset as well as convenience functions for extracting commonly used fields
@@ -53,13 +53,13 @@ class imslice():
             return self._dataset.data_element(tag).value
 
 
-    def pixelData(self, ROIName=None, rescale=False, vectorize=False, verbose=False):
+    def pixelData(self, ROIName=None, rescale=False, flatten=False, verbose=False):
         """get numpy ndarray of pixel intensities.
 
         Optional Args:
             rescale    -- return the element-wise rescaling of pixel_array using the formula:
                             pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
-            vectorize  -- return a 1darray in row-major order
+            flatten  -- return a 1darray in row-major order
         """
         # check that dataset exists
         if (self._dataset is None):
@@ -89,53 +89,57 @@ class imslice():
             if verbose:
                 print('image mask applied')
 
-        # VECTORIZE
-        if (vectorize):
+        # flatten
+        if (flatten):
             # flatten ndarray in row-major order (c-style)
             pixel_data = pixel_data.flatten(order='C').reshape((-1, 1), order='C')
 
         return pixel_data
 
-    def makeDenseMaskSlice(self, ROIName, vectorize=False, verbose=False):
+    def makeDenseMaskSlice(self, ROIName, flatten=False, maskbydefault=False, verbose=False):
         """use slice size and location info to construct dense binary mask based on the contour points
         defined in ROIName
         """
         # get maskslice from dict
-        if (ROIName is None):
-            #use first contour
-            ROIName = list(self.maskslice_dict.keys())[0]
+        if (ROIName is None or ROIName not in self.maskslice_dict):
+            # this slice must not contain the specified ROI or ROI wasnt specified
+            if (maskbydefault):
+                extra = 'Using mask of zeros instead.'
+                thisdensemask = np.zeros((self.rows(), self.columns()))
+            else:
+                extra = 'leaving unmasked (using mask of ones).'
+                thisdensemask = np.ones((self.rows(), self.columns()))
             if verbose:
-                print("masking with default contour ({:s})".format(ROIName))
-        if (ROIName not in self.maskslice_dict):
+                print('contour named: "{name:s}" not found. {extra:s}'.format(name=ROIName, extra=extra))
+        else:
+            slice = self.maskslice_dict[ROIName]
             if verbose:
-                print('contour named: "{name:s}" not found. no mask applied'.format(name=ROIName))
-            return np.ones((self.rows(), self.columns()))
-        slice = self.maskslice_dict[ROIName]
+                print('found ROI in slice')
 
-        # create 2d coords list with index coordinates rather than relative coordinates
-        (y_space, x_space) = self.pixelSpacing()
-        z_space = self.sliceThickness()
-        (x_start, y_start, z_start) = self.imagePositionPatient()
+            # create 2d coords list with index coordinates rather than relative coordinates
+            (y_space, x_space) = self.pixelSpacing()
+            z_space = self.sliceThickness()
+            (x_start, y_start, z_start) = self.imagePositionPatient()
 
-        contour_points = slice.contour_points
-        index_coords = []
-        for (x, y, z) in contour_points:
-            # shift x and y and scale appropriately
-            x_idx = round((x-x_start)/x_space)
-            y_idx = round((y-y_start)/y_space)
-            index_coords.append( (x_idx, y_idx) )
+            contour_points = slice.contour_points
+            index_coords = []
+            for (x, y, z) in contour_points:
+                # shift x and y and scale appropriately
+                x_idx = round((x-x_start)/x_space)
+                y_idx = round((y-y_start)/y_space)
+                index_coords.append( (x_idx, y_idx) )
 
-        # use PIL to draw the polygon as a dense image
-        im = PIL.Image.new('1', (self.rows(), self.columns()), color=0)
-        imdraw = Draw(im)
-        imdraw.polygon(index_coords, fill=1, outline=None)
-        del imdraw
+            # use PIL to draw the polygon as a dense image
+            im = PIL.Image.new('1', (self.rows(), self.columns()), color=0)
+            imdraw = Draw(im)
+            imdraw.polygon(index_coords, fill=1, outline=None)
+            del imdraw
 
-        # convert from PIL image to np.ndarray and threshold to binary
-        thisdensemask = np.array(im.getdata()).reshape((im.size[0], im.size[1]))
+            # convert from PIL image to np.ndarray and threshold to binary
+            thisdensemask = np.array(im.getdata()).reshape((self.rows(), self.columns()))
 
-        # VECTORIZE
-        if vectorize:
+        # flatten
+        if flatten:
             thisdensemask = thisdensemask.flatten(order='C').reshape((-1, 1), order='C')
 
         return thisdensemask
@@ -267,7 +271,7 @@ class imslice():
         return self._safeGetAttr('RescaleIntercept')
 
 
-class maskslice():
+class maskslice:
     def __init__(self, slicedataset):
         """takes contour data from rtstruct and creates ordered list of 3d coord triplets"""
         self.raw_contour_data = None
@@ -308,7 +312,7 @@ class maskslice():
         return outstr
 
 
-class maskvolume():
+class maskvolume:
     """Takes dicom dataset: ROIContour and StructureSetROI for a single ROI and constructs/stores maskslices
     for each slice in a dict by key=SOPInstanceUID
     """
@@ -337,32 +341,34 @@ class maskvolume():
             raise ValueError
 
 
-class BaseVolume():
+class BaseVolume:
     """Contains basic volume functionality including storage and vectorization of image slices
 
     Sorting of the slices is done by InstanceNumber or SliceLocation and is specified in constructor with
     "sortkey=". The order is specified with "ascend=True"
     """
-    def __init__(self, slices, recursive=False, sortkey='instanceNumber', ascend=True):
+    def __init__(self, slices, recursive=False, sortkey='sliceLocation', ascend=True):
         """Constructor - takes slicelist or path to dicom files and initializes volume
 
         Args:
             slices      -- list of Slice objects or path to a directory of dicom files
         Optional Args:
             recursive   -- if slices is path: descend into subdirs looking for dicoms?
-            sortkey     -- slice property to sort on (sliceLocation, instanceNumber)
+            sortkey     -- slice property to sort on (sliceLocation, index)
             ascend      -- sort order
 
         """
         # class members
-        self._slicedict_instanceNumber = {}
+        self._slicedict_index = {}
         self._slicedict_sliceLocation = {}
         self._cache_vector = None
         self.numberOfSlices = None
         self.rows = None
         self.columns = None
         self.modality = None
+        self.imageOrientationPatient = None
         self.imagePositionPatient = None
+        self.sliceStartPosition = None
         self.pixelSpacing = None
         self.sliceThickness = None
         self.rescaleSlope = None
@@ -382,7 +388,7 @@ class BaseVolume():
             print('must supply a list of imslices or a valid path to a dicom series')
             raise TypeError
 
-        # store static vectorized voxel intensities
+        # store static flattend voxel intensities
         self.__vectorize_image_tocache()
 
 
@@ -426,16 +432,30 @@ class BaseVolume():
         self.modality = slices[0].modality()
         self.rescaleSlope = slices[0].rescaleSlope()
         self.rescaleIntercept = slices[0].rescaleIntercept()
+        self.imageOrientationPatient = slices[0].imageOrientationPatient()
         self.imagePositionPatient = slices[0].imagePositionPatient()
         self.pixelSpacing = slices[0].pixelSpacing()
         self.sliceThickness = slices[0].sliceThickness()
         # add slices to dicts
-        for slice in slices:
-            self._slicedict_instanceNumber[slice.instanceNumber()] = slice
+        for i, slice in enumerate(sorted(slices, key=methodcaller('sliceLocation'), reverse=False)):
+            self._slicedict_index[i] = slice
             self._slicedict_sliceLocation[slice.sliceLocation()] = slice
+
+        # get the real start position along the slice-orthogonal direction
+        self.sliceStartPosition = self.__getSliceStartPosition()
 
 
     # PRIVATE METHODS
+    def __getSliceStartPosition(self):
+        """gets the lowest (most negative) z-axis slice position and reports that as the volume z-start
+        
+        the z location reported in the dicom tag: 'ImagePositionPatient' repeats the value already in 
+        the dicom tag: 'sliceLocation'. We need the true volume start position along the z axis so we can 
+        convert contour coordinates to indices for masking
+        """
+        return self.sortedSliceList(sortkey='sliceLocation', ascend=True)[0].sliceLocation()
+
+
     def __vectorize_image_tocache(self):
         """constructs vector (np 1darray) of all contained imslices and corresponding mask vector (if masks are available)
 
@@ -448,7 +468,7 @@ class BaseVolume():
         # begin vectorization
         vect_list = []
         for slice in self.sortedSliceList(sortkey='sliceLocation', ascend=True):
-            vect_list.append(slice.pixelData(vectorize=True))
+            vect_list.append(slice.pixelData(flatten=True))
         self._cache_vector = np.vstack(vect_list)
 
 
@@ -459,25 +479,59 @@ class BaseVolume():
         Returns:
             list<imslices>[self.numberOfSlices]
         """
-        if (len(self._slicedict_instanceNumber) == len(self._slicedict_sliceLocation)):
-            return list(self._slicedict_instanceNumber.values())
+        if (len(self._slicedict_index) == len(self._slicedict_sliceLocation)):
+            return list(self._slicedict_index.values())
         else:
             print('ERROR: dictionaries do not match')
             raise Exception
 
-    def _select_slicedict(self, ID):
-        """checks slicedicts for the one that will provide meaningful results for key=ID"""
-        if (ID in self._slicedict_instanceNumber):
-            # check SOPInstanceUID dict for existence
-            slicedict = self._slicedict_instanceNumber
-        elif (ID in self._slicedict_sliceLocation):
-            # check instanceNumber dict for existence
+    def _select_slicedict(self, IDX):
+        """checks slicedicts for the one that will provide meaningful results for key=IDX
+        """
+        if (IDX in self._slicedict_index):
+            # check index dict for existence
+            slicedict = self._slicedict_index
+        elif (IDX in self._slicedict_sliceLocation):
+            # check sliceLocation dict for existence
             slicedict = self._slicedict_sliceLocation
         else:
-            print('invalid type: "{:s}". ID must be a "float" or "int"'.format(str(type(ID))))
+            print('invalid type: "{:s}". IDX must be a "float" or "int"'.format(str(type(IDX))))
             raise TypeError
         return slicedict
 
+    def _crop(self, array, cropextents=None, flatten=False):
+        if (cropextents is None):
+            croparray = array
+        else:
+            # crop
+            xmin = cropextents['xmin']
+            xmax = cropextents['xmax']
+            if (xmin > xmax):
+                xmin, xmax = xmax, xmin
+            ymin = cropextents['ymin']
+            ymax = cropextents['ymax']
+            if (ymin > ymax):
+                ymin, ymax = ymax, ymin
+            zmin = cropextents['zmin']
+            zmax = cropextents['zmax']
+            if (zmin > zmax):
+                zmin, zmax = zmax, zmin
+
+            # convert to ndarray for easier slicing
+            if (array.ndim == 3 or (array.ndim == 2 and array.shape[0] == self.numberOfSlices * self.rows * self.columns)):
+                # must be a vectorized 3d array
+                array = array.reshape((self.numberOfSlices, self.rows, self.columns))
+                croparray = array[zmin:zmax, ymin:ymax, xmin:xmax]
+            elif (array.ndim == 2):
+                # must be a vectorized 2d array
+                array = array.reshape((self.rows, self.columns))
+                croparray = array[ymin:ymax, xmin:xmax]
+
+        # RESHAPE
+        if (flatten):
+            croparray = croparray.flatten(order='C').reshape((-1, 1))
+
+        return croparray
 
     # PUBLIC METHODS
     def get_val(self, z, y, x):
@@ -495,7 +549,7 @@ class BaseVolume():
             return 0
         else:
             pos = r*c*z + c*y + x
-            return np.asscalar(self._vector[pos])
+            return np.asscalar(self._cache_vector[pos])
 
     def set_val(self, z, y, x, value):
         """convenience function for reassigning feature intensity at location
@@ -512,34 +566,46 @@ class BaseVolume():
             pos = r*c*z + c*y + x
             self._cache_vector[pos] = value
 
-    def getSlice(self, ID, asdataset=False, rescale=False, vectorize=False):
+    def getSlice(self, idx, asdataset=False, rescale=False, flatten=False):
         """takes ID as sliceLocation[float] or InstanceNumber[int] and returns a numpy ndarray or\
                 the dataset object
 
         Args:
-            ID      -- SOPInstanceUID[string] or InstanceNumber[int] identifying the slice
+            idx      -- idx identifying the slice
         Optional Args:
             asdataset  -- False: return numpy ndarray using remaining opt-args to format
                            True: return imslice object
             rescale    -- return the element-wise rescaling of pixel_array using the formula:
                             pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
-            vectorize  -- return a 1darray in row-major order
+            flatten  -- return a 1darray in row-major order
         """
         # get the appropriate dict
-        slicedict = self._select_slicedict(ID)
+        slicedict = self._select_slicedict(idx)
 
         # check for existence
-        if (not ID in slicedict):
-            print('ID: "{:s}" not found in volume'.format(str(ID)))
+        if (not idx in slicedict):
+            print('idx: "{:s}" not found in volume'.format(str(idx)))
             raise KeyError
 
         if (asdataset):
-            return slicedict[ID]
+            thisslice = slicedict[idx]
         else:
-            return slicedict[ID].pixelData(rescale=rescale, vectorize=vectorize)
+            thisslice = slicedict[idx].pixelData(rescale=rescale, flatten=flatten)
+
+            # CROP
+            if (cropextents is not None):
+                thisslice = self._crop(thisslice, cropextents, flatten=flatten)
+            else:
+                # RESHAPE
+                if (flatten):
+                    thisslice = thisslice.flatten(order='C').reshape((-1, 1))
+                else:
+                    thisslice = thisslice.reshape((self.rows, self.columns))
+
+        return thisslice
 
     def sortedSliceList(self, sortkey='sliceLocation', ascend=True):
-        """returns a sorted version of the volume's slice list where the key is the slice instanceNumber
+        """returns a sorted version of the volume's slice list where the key is the slice location in mm
 
         Args:
             sortkey      -- method that takes as input an imslice object and returns a sortkey
@@ -550,7 +616,7 @@ class BaseVolume():
         """
         return sorted(self._sliceList(), key=methodcaller(sortkey), reverse=(not ascend))
 
-    def vectorize(self, rescale=False, verbose=False):
+    def vectorize(self, rescale=False, cropextents=None, asmatrix=False, verbose=False):
         """Apply rescale options to vectorized voxel intensities from slices in the volume
 
         Shape will be (numberOfSlices*rows*colums, 1)
@@ -564,6 +630,16 @@ class BaseVolume():
         """
         vect = self._cache_vector
 
+        # CROP
+        if (cropextents is not None):
+            vect = self._crop(vect, cropextents, flatten=(not asmatrix))
+        else:
+            # RESHAPE as matrix?
+            if (asmatrix):
+                vect = vect.reshape((self.numberOfSlices, self.rows, self.columns))
+            else:
+                vect = vect.flatten(order='C').reshape((-1, 1))
+
         # RESCALE
         if (rescale):
             f = float(self.rescaleSlope())
@@ -571,16 +647,19 @@ class BaseVolume():
             vect = np.add(np.multiply(vect, f), i)
             if verbose:
                 print('data rescaled using: ({f:0.3f} * data[i]) + {i:0.3f}'.format(f=f, i=i) )
+
         return vect
 
 class MaskableVolume(BaseVolume):
     """adds ROI masking to BaseVolume"""
-    def __init__(self, slices, recursive=False, sortkey='instanceNumber', ascend=True, maskvolume_dict=None):
+    def __init__(self, slices, recursive=False, sortkey='sliceLocation', ascend=True, maskvolume_dict=None):
         # call to BaseClass constructor
         super().__init__(slices, recursive=recursive, sortkey=sortkey, ascend=ascend)
 
         # derived class members
         self._cache_lastROIName = None
+        self._cache_lastmaskextents = None
+        self._cache_lastmaskextents_ROIName = None
         self._cache_maskvector = None
         self.ROINames = []
 
@@ -633,30 +712,41 @@ class MaskableVolume(BaseVolume):
     def __vectorize_mask_tocache(self, ROIName):
         """constructs vector (np 1darray) of all contained mask vectors (if available)
 
+        Checks cache for valid mask vector before continuing. This is considered safe to call whenever
+        we are unsure which mask is currently cached as the checking is wrapped in here
+        
         Shape will be (numberOfSlices*rows*columns, 1)
-
-        Returns:
-            np.ndarray of shape (numberOfSlices*rows*colums, 1)
         """
+        if (ROIName != self._cache_lastROIName):
+            # check for valid ROIName
+            if (not ROIName in self.ROINames):
+                print('ROI "{:s}" not found'.format(ROIName))
+                raise KeyError
+            print('Performing costly mask vectorization for image volume')
 
-        # check for valid ROIName
-        if (not ROIName in self.ROINames):
-            print('ROI "{:s}" not found'.format(ROIName))
-            raise KeyError
+            # sort by slice location (from low to high -> inferior axial to superior axial) 
+            # begin vectorization
+            mask_list = []
+            for slice in self.sortedSliceList(sortkey='sliceLocation', ascend=True):
+                if ((slice.maskslice_dict is not None and len(slice.maskslice_dict) > 0)
+                     and ROIName in slice.maskslice_dict):
 
-        # sort by slice location (from low to high -> inferior axial to superior axial) 
-        # begin vectorization
-        mask_list = []
-        for slice in self.sortedSliceList(sortkey='sliceLocation', ascend=True):
-            if (slice.maskslice_dict is not None and len(slice.maskslice_dict) > 0):
-                if (ROIName in slice.maskslice_dict):
-                    mask_list.append(slice.makeDenseMaskSlice(ROIName, vectorize=True))
+                    if (ROIName in slice.maskslice_dict):
+                        mask_list.append(slice.makeDenseMaskSlice(ROIName, flatten=True))
                 else:
                     # the ROI may be valid but not contained in this slice, use zeros instead
                     mask_list.append(np.zeros((slice.rows()*slice.columns(),1)))
-        if (len(mask_list) > 0):
-            self._cache_maskvector = np.vstack(mask_list)
-            self._cache_lastROIName = ROIName
+            if (len(mask_list) > 0):
+                self._cache_maskvector = np.vstack(mask_list)
+                self._cache_lastROIName = ROIName
+
+
+    # PROTECTED METHODS
+    def _crop(self, array, cropextents=None, flatten=False):
+        if (isinstance(cropextents, str)):
+            # requesting automatic crop to mask extents
+            cropextents = self.getMaskExtents(ROIName=cropextents, padding=0)
+        return super()._crop(array, cropextents, flatten=flatten)
 
 
     # PUBLIC METHODS
@@ -677,76 +767,203 @@ class MaskableVolume(BaseVolume):
             pos = r*c*z + c*y + x
             if (ROIName is not None):
                 # ensure whole volume has proper mask applied to cached _maskvector
-                if (not ROIName == self._cache_lastROIName):
-                    print('Performing costly mask vectorization for image volume')
-                    self.__vectorize_image_tocache(ROIName=ROIName, onlymask=True)
-                return np.asscalar(self._vector[pos] * self._maskvector[pos])
+                self.__vectorize_mask_tocache(ROIName=ROIName)
+                return np.asscalar(self._cache_vector[pos] * self._cache_maskvector[pos])
             else:
-                return np.asscalar(self._vector[pos])
+                return np.asscalar(self._cache_vector[pos])
 
-    def getSlice(self, ID, asdataset=False, ROIName=None, rescale=False, vectorize=False):
-        """takes ID as sliceLocation[float] or InstanceNumber[int] and returns a numpy ndarray or\
+    def getSlice(self, IDX, asdataset=False, ROIName=None, cropextents=None, rescale=False, flatten=False):
+        """takes IDX as sliceLocation[float] or InstanceNumber[int] and returns a numpy ndarray or\
                 the dataset object
 
         Args:
-            ID      -- SOPInstanceUID[string] or InstanceNumber[int] identifying the slice
+            IDX      -- depth based index or sliceLocation in mm identifying the slice
         Optional Args:
             asdataset  -- False: return numpy ndarray using remaining opt-args to format
                            True: return imslice object
             mask       -- return the element-wise product of pixel_array and binary mask
             rescale    -- return the element-wise rescaling of pixel_array using the formula:
                             pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
-            vectorize  -- return a 1darray in row-major order
+            flatten  -- return a 1darray in row-major order
         """
         # get the appropriate dict
-        slicedict = self._select_slicedict(ID)
+        slicedict = self._select_slicedict(IDX)
 
         # check for existence
-        if (not ID in slicedict):
-            print('ID: "{:s}" not found in volume'.format(str(ID)))
+        if (not IDX in slicedict):
+            print('IDX: "{:s}" not found in volume'.format(str(IDX)))
             raise KeyError
 
         if (asdataset):
-            return slicedict[ID]
+            thisslice = slicedict[IDX]
         else:
-            return slicedict[ID].pixelData(ROIName=ROIName, rescale=rescale, vectorize=vectorize)
+            thisslice = slicedict[IDX].pixelData(ROIName=ROIName, rescale=rescale, flatten=flatten)
 
-    def getMaskSlice(self, ID, asdataset=False, ROIName=None, vectorize=False, verbose=False):
-        """get the binary mask associated with slice[ID] and ROIName
+            # CROP
+            if (cropextents is not None):
+                thisslice = self._crop(thisslice, cropextents, flatten=flatten)
+            else:
+                # RESHAPE
+                if (flatten):
+                    thisslice = thisslice.flatten(order='C').reshape((-1, 1))
+                else:
+                    thisslice = thisslice.reshape((self.rows, self.columns))
+
+        return thisslice
+
+    def getMaskSlice(self, IDX, asdataset=False, ROIName=None, cropextents=None, flatten=False, maskbydefault=False,
+            verbose=False):
+        """get the binary mask associated with slice[IDX] and ROIName
 
         Args:
-            ID        -- can be the sliceLocation or instanceNumber
+            IDX        -- can be the sliceLocation or index
         
         Optional Args:
             asdataset -- returnt the maskslice object
             ROIName   -- string referencing an ROI. if None, the first available ROI will be used
-            vectorize -- return the maskslice as a flattened vector?
+            flatten -- return the maskslice as a flattened vector?
         """
+        thismask = None
         # get the appropriate dict
-        slicedict = self._select_slicedict(ID)
+        slicedict = self._select_slicedict(IDX)
         # check for existence
-        if (not ID in slicedict):
-            print('ID: "{:s}" not found in volume'.format(str(ID)))
+        if (not IDX in slicedict):
+            print('IDX: "{:s}" not found in volume'.format(str(IDX)))
             raise KeyError
 
-        thisslice = slicedict[ID]
+        thisslice = slicedict[IDX]
         if (asdataset):
             if (ROIName not in thisslice.maskslice_dict):
                 if verbose:
                     print('contour named: "{name:s}" not found. no mask applied'.format(name=ROIName))
-                    raise KeyError
+                raise KeyError
             else:
                 thismask = thisslice.maskslice_dict[ROIName]
         else:
-            thismask = thisslice.makeDenseMaskSlice(ROIName)
+            thismask = thisslice.makeDenseMaskSlice(ROIName,maskbydefault=maskbydefault, verbose=verbose)
 
-        # vectorize
-        if (vectorize):
-            thismask = thismask.flatten(order='C').reshape((-1, 1), order='C')
+            # CROP
+            if (cropextents is not None):
+                thismask = self._crop(thismask, cropextents, flatten=flatten)
+            else:
+                # RESHAPE
+                if (flatten):
+                    thismask = thismask.flatten(order='C').reshape((-1, 1))
+                else:
+                    thismask = thismask.reshape((self.rows, self.columns))
 
         return thismask
 
-    def vectorize(self, rescale=False, ROIName=None, verbose=False):
+    def getMaskExtents(self, ROIName, padding=0, verbose=False):
+        """finds the maximum index extents in each direction that the mask volume is non-masking within
+
+        Args:
+            ROIName   -- name of the ROI for which the extents are evaluated. If the same ROIName is given
+                         in two or more contiguous requests, the exents are taken from a cache of the first
+                         evaluation
+        Optional Args:
+            padding   -- number of voxels to pad the extents with in all directions
+
+        Returns:
+            dict[6]   -- keys are 'xmin', 'xmax', y... z... describing the index of start/stop for the volume
+        """
+        if (ROIName is not None and ROIName in self.ROINames):
+            if (ROIName == self._cache_lastmaskextents_ROIName):
+                # same as last request, use cached version
+                if verbose:
+                    print('using cached crop extents')
+                return self._cache_lastmaskextents
+            else:
+                if verbose:
+                    print('evaluating new crop extents')
+                global_limits = {'xmax': -4000,
+                                 'ymax': -4000,
+                                 'zmax': -4000,
+                                 'xmin': 4000,
+                                 'ymin': 4000,
+                                 'zmin': 4000 }
+                for i in range(self.numberOfSlices):
+                    try:
+                        # ROIName validity is checked in getMaskSlice
+                        maskds = self.getMaskSlice(i, asdataset=True, ROIName=ROIName, flatten=False)
+                    except:
+                        # ROIName doesn't occur in this slice
+                        continue
+
+                    #convert coords list to ndarray
+                    coords = np.array(maskds.contour_points)
+                    (xmin, ymin, zmin) = tuple(coords.min(axis=0, keepdims=False))
+                    (xmax, ymax, zmax) = tuple(coords.max(axis=0, keepdims=False))
+
+                    #update limits
+                    if xmin < global_limits['xmin']:
+                        global_limits['xmin'] = xmin
+                    if ymin < global_limits['ymin']:
+                        global_limits['ymin'] = ymin
+                    if zmin < global_limits['zmin']:
+                        global_limits['zmin'] = zmin
+                    if xmax > global_limits['xmax']:
+                        global_limits['xmax'] = xmax
+                    if ymax > global_limits['ymax']:
+                        global_limits['ymax'] = ymax
+                    if zmax > global_limits['zmax']:
+                        global_limits['zmax'] = zmax
+
+                (x_rel_start, y_rel_start, _) = self.imagePositionPatient
+                z_rel_start = self.sliceStartPosition
+                (y_space, x_space) = self.pixelSpacing
+                z_space = self.sliceThickness
+                global_limits['zmin'] = int(round((global_limits['zmin']-z_rel_start)/z_space)) - padding
+                global_limits['zmax'] = int(round((global_limits['zmax']-z_rel_start)/z_space)) + padding
+                global_limits['ymin'] = int(round((global_limits['ymin']-y_rel_start)/y_space)) - padding
+                global_limits['ymax'] = int(round((global_limits['ymax']-y_rel_start)/y_space)) + padding
+                global_limits['xmin'] = int(round((global_limits['xmin']-x_rel_start)/x_space)) - padding
+                global_limits['xmax'] = int(round((global_limits['xmax']-x_rel_start)/x_space)) + padding
+
+                self._cache_lastmaskextents = global_limits
+                self._cache_lastmaskextents_ROIName = ROIName
+
+        else:
+            global_limits = {'xmax': self.columns,
+                             'ymax': self.rows,
+                             'zmax': self.numberOfSlices,
+                             'xmin': 0,
+                             'ymin': 0,
+                             'zmin': 0 }
+
+        return global_limits
+
+    def vectorize(self, rescale=False, ROIName=None, cropextents=None, asmatrix=False, verbose=False):
+        """Apply rescale options to vectorized voxel intensities from slices in the volume
+
+        Shape will be (numberOfSlices*rows*colums, 1)
+
+        Optional Args:
+            rescale    -- return the element-wise rescaling of pixel_array using the formula:
+                            pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
+            cropextents -- dict of indices for starting and stopping the crop
+                            keys are 'xmin', 'xmax', y..., z...
+
+        Returns:
+            np.ndarray of shape (numberOfSlices*rows*colums, 1)
+        """
+
+        vect = super().vectorize(rescale=rescale, asmatrix=asmatrix, verbose=verbose)
+
+        # CROP
+        if (cropextents is not None):
+            vect = self._crop(vect, cropextents, flatten=(not asmatrix))
+
+        # MASK
+        if (ROIName is not None):
+            # get the mask with the same shape and cropping as the image
+            maskvect = self.vectorizeMask(ROIName, cropextents=cropextents,
+                    asmatrix=asmatrix, verbose=verbose)
+            vect = np.multiply(vect, maskvect)
+
+        return vect
+
+    def vectorizeMask(self, ROIName=None, cropextents=None, asmatrix=False, verbose=False):
         """Apply rescale options to vectorized voxel intensities from slices in the volume
 
         Shape will be (numberOfSlices*rows*colums, 1)
@@ -758,24 +975,29 @@ class MaskableVolume(BaseVolume):
         Returns:
             np.ndarray of shape (numberOfSlices*rows*colums, 1)
         """
-        vect = super().vectorize(rescale=rescale, verbose=verbose)
-
-        # MASK
         if (ROIName is not None):
-            if (ROIName != self._cache_lastROIName):
-                # need to revectorize proper mask
-                self.__vectorize_mask_tocache(ROIName)
+            # need to revectorize proper mask
+            self.__vectorize_mask_tocache(ROIName)
             if (not self._cache_maskvector is None):
-                vect = np.multiply(vect, self._maskvector)
-                if verbose:
-                    print('image mask applied')
+                vect = self._cache_maskvector
+        else:
+            if verbose:
+                print('ROI "{:s}" couldnt be found'.format(ROIName))
+                raise KeyError
+
+        # CROP
+        if (cropextents is not None):
+            vect = self._crop(vect, cropextents, flatten=(not asmatrix))
+        else:
+            # RESHAPE
+            if (asmatrix):
+                vect = vect.reshape((self.numberOfSlices, self.rows, self.columns))
             else:
-                if verbose:
-                    print('No mask has been defined. returning unmasked data')
+                vect = vect.flatten(order='C').reshape((-1, 1))
+
         return vect
 
-
-class FeatureVolume(MaskableVolume):
+class FeatureVolume(BaseVolume):
     def __init__(self):
         pass
 
@@ -834,7 +1056,7 @@ class FeatureVolume(MaskableVolume):
         with open(pickle_path, 'wb') as p:
             pickle.dump(feature_pickle, p)
 
-    def getSlice(self, idx=0, axis=0, flatten=False):
+    def getSlice(self, idx=0, axis=0, cropextents=None, flatten=False):
         """extract a slice along the axis specified in numpy matrix form
 
         Args:
@@ -844,7 +1066,7 @@ class FeatureVolume(MaskableVolume):
                             axis=0 -> depth: axial slices inf->sup
                             axis=1 -> rows: coronal slices anterior->posterior
                             axis=2 -> cols: sagittal slices: pt.right->pt.left
-            vectorize --  flatten to 1Darray?
+            flatten --  flatten to 1Darray?
         """
         # perform index bounding
         if axis==1:
@@ -857,17 +1079,33 @@ class FeatureVolume(MaskableVolume):
             idx = 0 if (idx < 0) else (self.numberOfSlices-1 if idx >= self.numberOfSlices else idx)
             slice = self._cache_vector.reshape((self.numberOfSlices, self.rows, self.columns))[idx, :, :]
 
-        if flatten:
-            slice = slice.flatten()
+        # CROP
+        if (cropextents is not None):
+            slice = self._crop(slice, cropextents, flatten=flatten)
+        else:
+            # RESHAPE
+            if flatten:
+                slice = slice.flatten(order='C').reshape((-1, 1))
+
         return slice
 
-    def vectorize(self):
+    def vectorize(self, cropextents=None, asmatrix=False):
         """consistency method returning the vectorized voxels in the feature volume
         """
-        return self._cache_vector
+        vect = self._cache_vector
+
+        # CROP
+        if (cropextents is not None):
+            vect = self._crop(vect, cropextents, flatten=(not asmatrix))
+        else:
+            # RESHAPE as matrix?
+            if (asmatrix):
+                vect = vect.reshape((self.numberOfSlices, self.rows, self.columns))
+
+        return vect
 
 
-class featpickle():
+class featpickle:
     def __init__(self):
         self.datavector = None
         self.depth = None

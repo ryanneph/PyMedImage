@@ -5,9 +5,10 @@ A collection of functions/methods that carry us from one step to another in the 
 
 import os, sys
 import pickle
-from utils.rttypes import *
-from utils.logging import print_indent, g_indents
-from utils import features
+import dicom
+from .rttypes import *
+from .logging import print_indent, g_indents
+from . import features
 
 def loadImages(images_path, modalities, rtstruct_path=None):
     """takes a list of modality strings and loads dicoms into an imvolume dataset from images_path
