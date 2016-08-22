@@ -3,10 +3,9 @@
 A collection of functions/methods that carry us from one step to another in the study
 """
 
-import os, sys
-import pickle
+import os
 import dicom
-from .rttypes import *
+from .rttypes import MaskableVolume, maskvolume, FeatureVolume
 from .logging import print_indent, g_indents
 from . import features
 

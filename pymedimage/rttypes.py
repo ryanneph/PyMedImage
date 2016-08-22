@@ -3,11 +3,11 @@
 Contains datatype definitions necessary for working with Dicom volumes, slices, and contours[masks]
 """
 
-import os, sys
+import os
 import numpy as np
-import dicom # pydicom
+import dicom  # pydicom
 from . import dcmio
-from operator import attrgetter, methodcaller
+from operator import methodcaller
 import pickle
 import PIL
 from PIL.ImageDraw import Draw
@@ -46,12 +46,11 @@ class imslice:
             print('tag must be a string')
             raise TypeError
 
-        if (not tag in self._dataset.dir()):
+        if (tag not in self._dataset.dir()):
             print('couldn\'t locate attribute: "{attr:s}" in dataset')
             raise KeyError
         else:
             return self._dataset.data_element(tag).value
-
 
     def pixelData(self, ROIName=None, rescale=False, flatten=False, verbose=False):
         """get numpy ndarray of pixel intensities.
@@ -118,7 +117,6 @@ class imslice:
 
             # create 2d coords list with index coordinates rather than relative coordinates
             (y_space, x_space) = self.pixelSpacing()
-            z_space = self.sliceThickness()
             (x_start, y_start, z_start) = self.imagePositionPatient()
 
             contour_points = slice.contour_points
@@ -147,7 +145,7 @@ class imslice:
 
     def sliceThickness(self):
         """gets thickness of this slice in mm
-        
+
         Returns:
             float
         """
@@ -163,7 +161,7 @@ class imslice:
 
     def imageOrientationPatient(self):
         """gets six-tuple of direction cosines of first row and first column w.r.t. the patient
-        
+
         Returns:
             list<float>[6]
         """
@@ -171,7 +169,7 @@ class imslice:
 
     def pixelSpacing(self):
         """gets (r,c) tuple indicating pixel spacing betwen adjacent rows (r) and columns (c) in mm
-        
+
         Returns:
             list<float>[2]
         """
@@ -179,7 +177,7 @@ class imslice:
 
     def sliceLocation(self):
         """gets location of this slice plane w.r.t. unspecified reference position in mm.
-        
+
         Returns:
             float
         """
@@ -199,7 +197,7 @@ class imslice:
 
     def rows(self):
         """gets number of rows in this slice
-        
+
         Returns:
             int
         """
@@ -215,7 +213,7 @@ class imslice:
 
     def seriesInstanceUID(self):
         """gets the UID for this imaging series as a string.
-        
+
         all slices found in a directory should have matching values.
 
         Returns:
@@ -248,7 +246,7 @@ class imslice:
 
     def modality(self):
         """gets the modality of the image slice as a string
-            
+
         Returns:
             str
         """
@@ -303,8 +301,8 @@ class maskslice:
             outstr += '('
             first = True
             for value in point:
-                if first==True:
-                    first=False
+                if first is True:
+                    first = False
                 else:
                     outstr += ', '
                 outstr += '{:0.3f}'.format(value)
@@ -448,23 +446,24 @@ class BaseVolume:
     # PRIVATE METHODS
     def __getSliceStartPosition(self):
         """gets the lowest (most negative) z-axis slice position and reports that as the volume z-start
-        
-        the z location reported in the dicom tag: 'ImagePositionPatient' repeats the value already in 
-        the dicom tag: 'sliceLocation'. We need the true volume start position along the z axis so we can 
+
+        the z location reported in the dicom tag: 'ImagePositionPatient' repeats the value already in
+        the dicom tag: 'sliceLocation'. We need the true volume start position along the z axis so we can
         convert contour coordinates to indices for masking
         """
         return self.sortedSliceList(sortkey='sliceLocation', ascend=True)[0].sliceLocation()
 
 
     def __vectorize_image_tocache(self):
-        """constructs vector (np 1darray) of all contained imslices and corresponding mask vector (if masks are available)
+        """constructs vector (np 1darray) of all contained imslices and corresponding mask vector (if masks
+        are available)
 
         Shape will be (numberOfSlices*rows*colums, 1)
 
         Returns:
             np.ndarray of shape (numberOfSlices*rows*columns, 1)
         """
-        # sort by slice location (from low to high -> inferior axial to superior axial) 
+        # sort by slice location (from low to high -> inferior axial to superior axial)
         # begin vectorization
         vect_list = []
         for slice in self.sortedSliceList(sortkey='sliceLocation', ascend=True):
@@ -475,7 +474,7 @@ class BaseVolume:
     # PROTECTED METHODS
     def _sliceList(self):
         """Function allowing extraction of a list of imslices from volume dictionary
-        
+
         Returns:
             list<imslices>[self.numberOfSlices]
         """
@@ -518,7 +517,8 @@ class BaseVolume:
                 zmin, zmax = zmax, zmin
 
             # convert to ndarray for easier slicing
-            if (array.ndim == 3 or (array.ndim == 2 and array.shape[0] == self.numberOfSlices * self.rows * self.columns)):
+            if (array.ndim == 3 or (array.ndim == 2
+                                    and array.shape[0] == self.numberOfSlices * self.rows * self.columns)):
                 # must be a vectorized 3d array
                 array = array.reshape((self.numberOfSlices, self.rows, self.columns))
                 croparray = array[zmin:zmax, ymin:ymax, xmin:xmax]
@@ -566,7 +566,7 @@ class BaseVolume:
             pos = r*c*z + c*y + x
             self._cache_vector[pos] = value
 
-    def getSlice(self, idx, asdataset=False, rescale=False, flatten=False):
+    def getSlice(self, idx, asdataset=False, rescale=False, cropextents=None, flatten=False):
         """takes ID as sliceLocation[float] or InstanceNumber[int] and returns a numpy ndarray or\
                 the dataset object
 
@@ -583,7 +583,7 @@ class BaseVolume:
         slicedict = self._select_slicedict(idx)
 
         # check for existence
-        if (not idx in slicedict):
+        if (idx not in slicedict):
             print('idx: "{:s}" not found in volume'.format(str(idx)))
             raise KeyError
 
@@ -685,8 +685,8 @@ class MaskableVolume(BaseVolume):
             for ROIName, thismaskvolume in maskvolume_dict.items():
                 for thismaskslice in thismaskvolume.slicelist:
                     sliceLocation = thismaskslice.sliceLocation()
-                    if (not sliceLocation in maskslice_dict):
-                        #initialize value as empty dict, add to it for subequent matches of SOPInstanceUID
+                    if (sliceLocation not in maskslice_dict):
+                        # initialize value as empty dict, add to it for subequent matches of SOPInstanceUID
                         maskslice_dict[sliceLocation] = {}
                     else:
                         # add thismaskslice with SOPInstanceUID as value to underlying dict with key=ROIName
@@ -714,7 +714,7 @@ class MaskableVolume(BaseVolume):
 
         Checks cache for valid mask vector before continuing. This is considered safe to call whenever
         we are unsure which mask is currently cached as the checking is wrapped in here
-        
+
         Shape will be (numberOfSlices*rows*columns, 1)
         """
         if (ROIName != self._cache_lastROIName):
@@ -724,7 +724,7 @@ class MaskableVolume(BaseVolume):
                 raise KeyError
             print('Performing costly mask vectorization for image volume')
 
-            # sort by slice location (from low to high -> inferior axial to superior axial) 
+            # sort by slice location (from low to high -> inferior axial to superior axial)
             # begin vectorization
             mask_list = []
             for slice in self.sortedSliceList(sortkey='sliceLocation', ascend=True):
@@ -817,7 +817,7 @@ class MaskableVolume(BaseVolume):
 
         Args:
             IDX        -- can be the sliceLocation or index
-        
+
         Optional Args:
             asdataset -- returnt the maskslice object
             ROIName   -- string referencing an ROI. if None, the first available ROI will be used
@@ -890,12 +890,12 @@ class MaskableVolume(BaseVolume):
                         # ROIName doesn't occur in this slice
                         continue
 
-                    #convert coords list to ndarray
+                    # convert coords list to ndarray
                     coords = np.array(maskds.contour_points)
                     (xmin, ymin, zmin) = tuple(coords.min(axis=0, keepdims=False))
                     (xmax, ymax, zmax) = tuple(coords.max(axis=0, keepdims=False))
 
-                    #update limits
+                    # update limits
                     if xmin < global_limits['xmin']:
                         global_limits['xmin'] = xmin
                     if ymin < global_limits['ymin']:
@@ -1061,7 +1061,7 @@ class FeatureVolume(BaseVolume):
 
         Args:
             idx     --  index of the slice
-            axis    --  specifies axis along which to extract 
+            axis    --  specifies axis along which to extract
                             Uses depth-row major ordering:
                             axis=0 -> depth: axial slices inf->sup
                             axis=1 -> rows: coronal slices anterior->posterior
