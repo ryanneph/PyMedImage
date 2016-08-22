@@ -4,40 +4,37 @@ features.py
 Utility functions for calculating common image features
 """
 import numpy as np
-from .rttypes import *
-from .logging import *
+from .rttypes import MaskableVolume, FeatureVolume, BaseVolume
+from .logging import g_indents, print_indent, print_timer
 import time
-import sys
 import pycuda.autoinit
 import pycuda.driver as cuda
 from pycuda.compiler import SourceModule
 pycuda.compiler.DEFAULT_NVCC_FLAGS = ['--std=c++11']
 
-#indent shortnames
+# indent shortnames
 l3 = g_indents[3]
 l4 = g_indents[4]
 
 def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
     """compute the pixel-wise entropy of an image over a region defined by neighborhood
-    
+
     Args:
         image -- a flattened array of pixel intensities of type imslice or a matrix shaped numpy ndarray
         radius -- describes neighborood size in each dimension. radius of 4 would be a 9x9x9
     Returns:
         H as MaskableVolume with shape=image.shape
     """
-    if (MaskableVolume.__name__ in str(type(image_volume))): # This is an ugly way of type-checking but cant get isinstance to see both as the same
+    if (MaskableVolume.__name__ in str(type(image_volume))):  # This is an ugly way of type-checking but cant get isinstance to see both as the same
         d = image_volume.numberOfSlices
         r = image_volume.rows
         c = image_volume.columns
 
-        #prepare mask vector within image_volume
-
         def get_val(image_volume, z, y, x):
             # image boundary handling is built into BaseVolume.get_val
-            return image_volume.get_val(z,y,x)
+            return image_volume.get_val(z, y, x)
         def set_val(feature_volume, z, y, x, val):
-            feature_volume.set_val(z,y,x,val)
+            feature_volume.set_val(z, y, x, val)
 
         #instantiate a blank BaseVolume of the proper size
         H = FeatureVolume().fromZeros((d, r, c))
@@ -48,7 +45,7 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
             d, r, c = (1, *image_volume.shape)
             image_volume = image_volume.reshape((d,r,c))
 
-        #instantiate a blank np.ndarray of the proper size
+        # instantiate a blank np.ndarray of the proper size
         H = np.zeros((d, r, c))
 
         def get_val(image, z, y, x):
@@ -86,14 +83,13 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
     cstop = extents['xmax']
 
     print_indent('calculation subset volume z=({zstart:d}->{zstop:d}), '
-                                    'y=({ystart:d}->{ystop:d}), '
-                                    'x=({xstart:d}->{xstop:d})'.format(
-                                        zstart=dstart,
-                                        zstop=dstop,
-                                        ystart=rstart,
-                                        ystop=rstop,
-                                        xstart=cstart,
-                                        xstop=cstop ), l4)
+                                           'y=({ystart:d}->{ystop:d}), '
+                                           'x=({xstart:d}->{xstop:d})'.format(zstart=dstart,
+                                                                              zstop=dstop,
+                                                                              ystart=rstart,
+                                                                              ystop=rstop,
+                                                                              xstart=cstart,
+                                                                              xstop=cstop ), l4)
     # nested loop approach -> slowest, try GPU next
     idx = -1
     total_voxels = d * r * c
@@ -181,15 +177,15 @@ def image_entropy_gpu(image_vect, radius=2):
                     int k_idx = blockIdx.z * (threadIdx.z + k_z * blockDim.y * blockDim.x)
                               + blockIdx.y * (threadIdx.y + k_y * blockDim.x)
                               + blockIdx.x * (threadIdx.x + k_x);
-                            
+
                     // Count unique pixel intensities
                     //val = fmax(0, image_vect[k_idx])
-                    image_vect[idx] = idx % 255; 
+                    image_vect[idx] = idx % 255;
                 }
             }
         }
 
-        
+
     }
     """)
 
