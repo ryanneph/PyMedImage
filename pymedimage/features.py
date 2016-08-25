@@ -4,7 +4,7 @@ features.py
 Utility functions for calculating common image features
 """
 import numpy as np
-from .rttypes import MaskableVolume, FeatureVolume, BaseVolume
+from .rttypes import BaseVolume, MaskableVolume
 from .logging import g_indents, print_indent, print_timer
 import time
 import pycuda.autoinit
@@ -16,7 +16,7 @@ pycuda.compiler.DEFAULT_NVCC_FLAGS = ['--std=c++11']
 l3 = g_indents[3]
 l4 = g_indents[4]
 
-def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
+def image_entropy(image_volume, radius=2, roi=None, verbose=False):
     """compute the pixel-wise entropy of an image over a region defined by neighborhood
 
     Args:
@@ -26,35 +26,32 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
         H as MaskableVolume with shape=image.shape
     """
     if (MaskableVolume.__name__ in str(type(image_volume))):  # This is an ugly way of type-checking but cant get isinstance to see both as the same
-        d = image_volume.numberOfSlices
-        r = image_volume.rows
-        c = image_volume.columns
-
-        def get_val(image_volume, z, y, x):
+        (c, r, d) = image_volume.frameofreference.size
+        def get_val(image_volume, x, y, z):
             # image boundary handling is built into BaseVolume.get_val
-            return image_volume.get_val(z, y, x)
-        def set_val(feature_volume, z, y, x, val):
-            feature_volume.set_val(z, y, x, val)
+            return image_volume.get_val(x, y, z)
+        def set_val(feature_volume, x, y, z, val):
+            feature_volume.set_val(x, y, z, val)
 
         #instantiate a blank BaseVolume of the proper size
-        H = FeatureVolume().fromZeros((d, r, c))
+        H = MaskableVolume().fromArray(np.zeros((c, r, d)), image_volume.frameofreference)
     elif isinstance(image_volume, np.ndarray):
         if image_volume.ndim == 3:
-            d, r, c = image_volume.shape
+            c, r, d = image_volume.shape
         elif image_volume.ndim == 2:
-            d, r, c = (1, *image_volume.shape)
-            image_volume = image_volume.reshape((d,r,c))
+            c, r, d = (1, *image_volume.shape)
+            image_volume = image_volume.reshape((c,r,d))
 
         # instantiate a blank np.ndarray of the proper size
-        H = np.zeros((d, r, c))
+        H = np.zeros((c, r, d))
 
-        def get_val(image, z, y, x):
+        def get_val(image, x, y, z):
             if (z<0 or y<0 or x<0) or (z>=d or y>=r or x>=c):
                 return 0
             else:
-                return image[z, y, x]
-        def set_val(image, z, y ,x, val):
-            image[z, y, x] = val
+                return image[x, y, z]
+        def set_val(image, x, y ,z, val):
+            image[x, y, z] = val
     else:
         print('invalid image type supplied ({:s}). Please specify an image of type BaseVolume \
             or type np.ndarray'.format(str(type(image_volume))))
@@ -73,23 +70,20 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
     # timing
     start_entropy_calc = time.time()
 
-    # get max extents of the mask/ROI to speed up calculation only within ROI cubic volume
-    extents = image_volume.getMaskExtents(ROIName, padding=0)
-    dstart = extents['zmin']
-    dstop = extents['zmax']
-    rstart = extents['ymin']
-    rstop = extents['ymax']
-    cstart = extents['xmin']
-    cstop = extents['xmax']
+    if (roi is not None):
+        # get max extents of the mask/ROI to speed up calculation only within ROI cubic volume
+        extents = roi.getROIExtents()
+        cstart, rstart, dstart = image_volume.frameofreference.getIndices(extents.start)
+        cstop, rstop, dstop = image_volume.frameofreference.getIndices(extents.end())
+        print_indent('calculation subset volume x=({xstart:d}->{xstop:d}), '
+                                               'y=({ystart:d}->{ystop:d}), '
+                                               'z=({zstart:d}->{zstop:d})'.format(zstart=dstart,
+                                                                                  zstop=dstop,
+                                                                                  ystart=rstart,
+                                                                                  ystop=rstop,
+                                                                                  xstart=cstart,
+                                                                                  xstop=cstop ), l4)
 
-    print_indent('calculation subset volume z=({zstart:d}->{zstop:d}), '
-                                           'y=({ystart:d}->{ystop:d}), '
-                                           'x=({xstart:d}->{xstop:d})'.format(zstart=dstart,
-                                                                              zstop=dstop,
-                                                                              ystart=rstart,
-                                                                              ystop=rstop,
-                                                                              xstart=cstart,
-                                                                              xstop=cstop ), l4)
     # nested loop approach -> slowest, try GPU next
     idx = -1
     total_voxels = d * r * c
@@ -103,7 +97,7 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
                 idx += 1
                 if (z<dstart or z>dstop or y<rstart or y>rstop or x<cstart or x>cstop):
                     #fill 0 instead
-                    set_val(H,z,y,x,0)
+                    set_val(H,x,y,z,0)
                 else:
                     subset_idx += 1
                     if ( verbose and (subset_idx % fivepercent == 0 or subset_idx == subset_total_voxels-1)):
@@ -119,7 +113,7 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
                             for k_y in range(-radius, radius+1):
                                 #print('k_z:{z:d}, k_y:{y:d}, k_x:{x:d}'.format(z=k_z,y=k_y,x=k_x))
                                 # Calculate probabilities
-                                val = get_val(image_volume, z+k_z,y+k_y,x+k_x)
+                                val = get_val(image_volume, x+k_x,y+k_y, z+k_z)
                                 if val in val_counts:
                                     val_counts[val] += 1
                                 else:
@@ -132,7 +126,7 @@ def image_entropy(image_volume, radius=2, ROIName=None, verbose=False):
                         val_probs[i] = val_counts[val]/total_counts
                     # calculate local entropy
                     h = -np.sum(val_probs*np.log(val_probs)) #/ np.log(65536)
-                    set_val(H, z, y, x, h)
+                    set_val(H, x, y, z, h)
                     if (False and verbose and (subset_idx % onepercent == 0 or subset_idx == subset_total_voxels-1)):
                         print('total counts: ' + str(total_counts))
                         print('val_probs = ' + str(val_probs))
