@@ -8,6 +8,7 @@ import numpy as np
 import dicom  # pydicom
 import pickle
 from PIL import Image, ImageDraw
+from scipy.ndimage import interpolation
 from . import dcmio, misc
 
 
@@ -170,7 +171,7 @@ class ROI:
         # check if our result is actually valid or we just hit the end of the array
         if minerror >= tolerance:
             # print('No slice found within {:f} mm of position {:f}'.format(tolerance, position))
-            return np.ones((cols, rows, 1))
+            return np.ones((rows, cols))
         # print('slice found at {:f} for position query at {:f}'.format(coordslice[0][2], position))
 
         # get coordinate values
@@ -181,14 +182,14 @@ class ROI:
             y_idx = int(round((y-ystart)/yspace))
             index_coords.append( (x_idx, y_idx) )
 
-        # use PIL to draw the polygon as a dense image
-        im = Image.new('1', (rows, cols), color=0)
+        # use PIL to draw the polygon as a dense image (PIL uses shape: (width, height))
+        im = Image.new('1', (cols, rows), color=0)
         imdraw = ImageDraw.Draw(im)
         imdraw.polygon(index_coords, fill=1, outline=None)
         del imdraw
 
         # convert from PIL image to np.ndarray and threshold to binary
-        return np.array(im.getdata()).reshape((cols, rows, 1))
+        return np.array(im.getdata()).reshape((rows, cols))
 
     def makeDenseMask(self, frameofreference=None, verbose=False):
         """Takes a FrameOfReference and constructs a dense binary mask for the ROI (1 inside ROI, 0 outside)
@@ -225,12 +226,14 @@ class ROI:
             if (verbose):
                 print('making dense mask volume from z coordinates: {:f} to {:f}'.format(
                     zstart, (zspace * (depth+1) + zstart)))
-            for position in misc.frange(zstart, (zspace * (depth+1) + zstart), zspace):
+            for i in range(depth):
+                position = zstart + i * zspace
                 # get a slice at every position within the current frameofreference
-                maskslicearray_list.append(self.makeDenseMaskSlice(position, frameofreference))
+                densemaskslice = self.makeDenseMaskSlice(position, frameofreference)
+                maskslicearray_list.append(densemaskslice.reshape((1, *densemaskslice.shape)))
 
             # construct BaseVolume from dense slice arrays
-            densemask = BaseVolume().fromArray(np.concatenate(maskslicearray_list, axis=2), frameofreference)
+            densemask = BaseVolume().fromArray(np.concatenate(maskslicearray_list, axis=0), frameofreference)
             self.__cache_densemask = densemask
             return densemask
 
@@ -362,11 +365,11 @@ class BaseVolume:
         array_list = []
         for dataset in dataset_list:
             array = dataset.pixel_array
-            array = array.reshape((array.shape[0], array.shape[1], 1))
+            array = array.reshape((1, array.shape[1], array.shape[0]))
             array_list.append(array)
 
         # stack arrays
-        self.array = np.concatenate(array_list, axis=2)
+        self.array = np.concatenate(array_list, axis=0)
 
         return self
 
@@ -392,45 +395,100 @@ class BaseVolume:
         basevolumepickle.startposition = self.frameofreference.start
         basevolumepickle.spacing = self.frameofreference.spacing
         basevolumepickle.size = self.frameofreference.size
+        basevolumepickle.dataarray = self.array
 
         with open(pickle_path, 'wb') as p:
             pickle.dump(basevolumepickle, p)
 
     # PUBLIC METHODS
-    def getSlice(self, idx, axis=2, rescale=False, flatten=False):
+    def conformTo(self, frameofreference, verbose=False):
+        """Resamples the current BaseVolume to the supplied FrameOfReference
+
+        Args:
+            frameofreference   -- FrameOfReference object to resample the Basevolume to
+
+        Returns:
+            BaseVolume
+        """
+        # conform volume to alternate FrameOfReference
+        if (frameofreference is None):
+            print('no FrameOfReference provided')
+            raise ValueError
+        elif (FrameOfReference.__name__ not in str(type(frameofreference))):  # This is an ugly way of type-checking but cant get isinstance to see both as the same
+            print('supplied frameofreference of type: "{:s}" must be of the type: "FrameOfReference"'.format(
+                str(type(frameofreference))))
+            raise TypeError
+
+        # crop to active volume of requested FrameOfReference in frameofreference
+        xstart_idx, ystart_idx, zstart_idx = self.frameofreference.getIndices(frameofreference.start)
+        xend_idx, yend_idx, zend_idx = self.frameofreference.getIndices(frameofreference.end())
+        cropped = self.array[zstart_idx:zend_idx, ystart_idx:yend_idx, xstart_idx:xend_idx]
+        if (verbose):
+            """
+            print('original FOR= start:{:s}, spacing:{:s}, size:{:s}'.format(
+                    str(self.frameofreference.start),
+                    str(self.frameofreference.spacing),
+                    str(self.frameofreference.size)))
+            print('new FOR= start:{:s}, spacing:{:s}, size:{:s}'.format(
+                    str(frameofreference.start),
+                    str(frameofreference.spacing),
+                    str(frameofreference.size)))
+            """
+            print('uncropped shape (z,y,x): {:s}'.format(str(self.array.shape)))
+            print('cropped shape(z,y,x): {:s}'.format(str(cropped.shape)))
+            print('frameofreference shape (z,y,x): ({:d}, {:d}, {:d})'.format(frameofreference.size[2],
+                                                               frameofreference.size[1],
+                                                               frameofreference.size[0]))
+
+        zoomfactors = []
+        for i in range(3):
+            zoomfactors.insert(i, frameofreference.size[2-i] / cropped.shape[i])
+        zoomfactors = tuple(zoomfactors)
+        if (verbose):
+            print('zoom factors (z, y, x): ({:0.3f}, {:0.3f}, {:0.3f})'.format(*zoomfactors))
+        resampled_array = interpolation.zoom(cropped, zoomfactors, order=0, mode='nearest')
+
+        # reconstruct volume from resampled array
+        resampled_volume = BaseVolume().fromArray(resampled_array, frameofreference)
+        return resampled_volume
+
+    def getSlice(self, idx, axis=0, rescale=False, flatten=False):
         """Extracts 2dArray of idx along the axis.
         Args:
-            idx     -- idx identifying the slice along axis
+            idx       -- idx identifying the slice along axis
 
         Optional Args:
-            axis    --  specifies axis along which to extract
+            axis      -- specifies axis along which to extract
                             Uses depth-row major ordering:
-                            axis=0 -> cols: sagittal slices: pt.right->pt.left
+                            axis=0 -> depth: axial slices inf->sup
                             axis=1 -> rows: coronal slices anterior->posterior
-                            axis=2 -> depth: axial slices inf->sup
-            rescale -- return the element-wise rescaling of pixel_array using the formula:
+                            axis=2 -> cols: sagittal slices: pt.right->pt.left
+            rescale   -- return the element-wise rescaling of pixel_array using the formula:
                             pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
-                        If True, use self.rescaleparams, otherwise provide a RescaleParams object
-            flatten -- return a 1darray in depth-stacked row-major order
+                            If True, use self.rescaleparams, otherwise provide a RescaleParams object
+            flatten   -- return a 1darray in depth-stacked row-major order
         """
         cols, rows, depth = self.frameofreference.size
 
         # perform index bounding
-        if axis==1:
-            if (idx < 0 or idx >= rows):
-                print('index out of bounds. must be between 0 -> {:d}'.format(rows))
-                raise ValueError
-            thisslice = self.array[:, idx, :]
-        elif axis==2:
+        if (axis==0):
             if (idx < 0 or idx >= depth):
                 print('index out of bounds. must be between 0 -> {:d}'.format(depth))
-                raise ValueError
-            thisslice = self.array[:, :, idx]
-        else:
+                raise IndexError
+            thisslice = self.array[idx, :, :]
+        elif (axis==1):
+            if (idx < 0 or idx >= rows):
+                print('index out of bounds. must be between 0 -> {:d}'.format(rows))
+                raise IndexError
+            thisslice = self.array[:, idx, :]
+        elif (axis==2):
             if (idx < 0 or idx >= cols):
                 print('index out of bounds. must be between 0 -> {:d}'.format(cols))
-                raise ValueError
-            thisslice = self.array[idx, :, :]
+                raise IndexError
+            thisslice = self.array[:, :, idx]
+        else:
+            print('invalid axis supplied. must be between 0 -> 2')
+            raise ValueError
 
         # RESCALE
         if (rescale is True):
@@ -456,7 +514,7 @@ class BaseVolume:
         """
         return self.array.flatten(order='C').reshape((-1, 1))
 
-    def get_val(self, x, y, z):
+    def get_val(self, z, y, x):
         """take xyz indices and return the value in array at that location
         """
         frameofreference = self.frameofreference
@@ -474,9 +532,9 @@ class BaseVolume:
             print('z index out of bounds. must be between 0 -> {:d}'.format(depth))
             raise IndexError
 
-        return self.array[x, y, z]
+        return self.array[z, y, x]
 
-    def set_val(self, x, y, z, value):
+    def set_val(self, z, y, x, value):
         """take xyz indices and value and reassing the value in array at that location
         """
         frameofreference = self.frameofreference
@@ -495,7 +553,7 @@ class BaseVolume:
             raise IndexError
 
         # reassign value
-        self.array[x, y, z] = value
+        self.array[z, y, x] = value
 
 
 class MaskableVolume(BaseVolume):
@@ -506,7 +564,20 @@ class MaskableVolume(BaseVolume):
         # call to base class initializer
         super().__init__()
 
-    def getSlice(self, idx, axis=2, rescale=False, flatten=False, roi=None):
+    def conformTo(self, frameofreference, verbose=False):
+        """Resamples the current MaskableVolume to the supplied FrameOfReference
+
+        Args:
+            frameofreference   -- FrameOfReference object to resample the MaskableVolume to
+
+        Returns:
+            MaskableVolume
+        """
+        base = super().conformTo(frameofreference, verbose)
+        maskable = MaskableVolume().fromArray(base.array, base.frameofreference)
+        return maskable
+
+    def getSlice(self, idx, axis=0, rescale=False, flatten=False, roi=None):
         """Extracts 2dArray of idx along the axis.
         Args:
             idx     -- idx identifying the slice along axis
@@ -514,9 +585,9 @@ class MaskableVolume(BaseVolume):
         Optional Args:
             axis    --  specifies axis along which to extract
                             Uses depth-row major ordering:
-                            axis=0 -> cols: sagittal slices: pt.right->pt.left
+                            axis=0 -> depth: axial slices inf->sup
                             axis=1 -> rows: coronal slices anterior->posterior
-                            axis=2 -> depth: axial slices inf->sup
+                            axis=2 -> cols: sagittal slices: pt.right->pt.left
             rescale -- return the element-wise rescaling of pixel_array using the formula:
                             pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
                         If True, use self.rescaleparams, otherwise provide a RescaleParams object
@@ -524,12 +595,11 @@ class MaskableVolume(BaseVolume):
             roi     -- ROI object that can be supplied to mask the output of getSlice
          """
         # call to base class
-        slicearray = super().getSlice(idx, axis=2, rescale=False, flatten=False)
+        slicearray = super().getSlice(idx, axis, rescale, flatten)
 
         # get equivalent slice from densemaskarray
         if (roi is not None):
-            maskslicearray = roi.makeDenseMask(self.frameofreference).getSlice(idx, axis, rescale=False,
-                                                                               flatten=flatten)
+            maskslicearray = roi.makeDenseMask(self.frameofreference).getSlice(idx, axis, rescale, flatten)
             # apply mask
             slicearray = np.multiply(slicearray, maskslicearray)
 

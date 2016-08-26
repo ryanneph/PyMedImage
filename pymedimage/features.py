@@ -27,31 +27,31 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
     """
     if (MaskableVolume.__name__ in str(type(image_volume))):  # This is an ugly way of type-checking but cant get isinstance to see both as the same
         (c, r, d) = image_volume.frameofreference.size
-        def get_val(image_volume, x, y, z):
+        def get_val(image_volume, z, y, x):
             # image boundary handling is built into BaseVolume.get_val
-            return image_volume.get_val(x, y, z)
-        def set_val(feature_volume, x, y, z, val):
-            feature_volume.set_val(x, y, z, val)
+            return image_volume.get_val(z, y, x)
+        def set_val(feature_volume, z, y, x, val):
+            feature_volume.set_val(z, y, x, val)
 
         #instantiate a blank BaseVolume of the proper size
-        H = MaskableVolume().fromArray(np.zeros((c, r, d)), image_volume.frameofreference)
+        H = MaskableVolume().fromArray(np.zeros((d, r, c)), image_volume.frameofreference)
     elif isinstance(image_volume, np.ndarray):
         if image_volume.ndim == 3:
             c, r, d = image_volume.shape
         elif image_volume.ndim == 2:
             c, r, d = (1, *image_volume.shape)
-            image_volume = image_volume.reshape((c,r,d))
+            image_volume = image_volume.reshape((d, r, c))
 
         # instantiate a blank np.ndarray of the proper size
-        H = np.zeros((c, r, d))
+        H = np.zeros((d, r, c))
 
-        def get_val(image, x, y, z):
+        def get_val(image, z, y, x):
             if (z<0 or y<0 or x<0) or (z>=d or y>=r or x>=c):
                 return 0
             else:
-                return image[x, y, z]
-        def set_val(image, x, y ,z, val):
-            image[x, y, z] = val
+                return image[z, y, x]
+        def set_val(image, z, y, x, val):
+            image[z, y, x] = val
     else:
         print('invalid image type supplied ({:s}). Please specify an image of type BaseVolume \
             or type np.ndarray'.format(str(type(image_volume))))
@@ -97,7 +97,7 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
                 idx += 1
                 if (z<dstart or z>dstop or y<rstart or y>rstop or x<cstart or x>cstop):
                     #fill 0 instead
-                    set_val(H,x,y,z,0)
+                    set_val(H, z, y, x, 0)
                 else:
                     subset_idx += 1
                     if ( verbose and (subset_idx % fivepercent == 0 or subset_idx == subset_total_voxels-1)):
@@ -113,7 +113,7 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
                             for k_y in range(-radius, radius+1):
                                 #print('k_z:{z:d}, k_y:{y:d}, k_x:{x:d}'.format(z=k_z,y=k_y,x=k_x))
                                 # Calculate probabilities
-                                val = get_val(image_volume, x+k_x,y+k_y, z+k_z)
+                                val = get_val(image_volume, z+k_z, y+k_y, x+k_x)
                                 if val in val_counts:
                                     val_counts[val] += 1
                                 else:
@@ -126,7 +126,7 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
                         val_probs[i] = val_counts[val]/total_counts
                     # calculate local entropy
                     h = -np.sum(val_probs*np.log(val_probs)) #/ np.log(65536)
-                    set_val(H, x, y, z, h)
+                    set_val(H, z, y, x, h)
                     if (False and verbose and (subset_idx % onepercent == 0 or subset_idx == subset_total_voxels-1)):
                         print('total counts: ' + str(total_counts))
                         print('val_probs = ' + str(val_probs))

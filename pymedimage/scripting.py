@@ -9,6 +9,9 @@ from .rttypes import BaseVolume, MaskableVolume, ROI
 from .logging import print_indent, g_indents
 from . import features
 
+l1_indent = g_indents[1]
+l2_indent = g_indents[2]
+
 def loadImages(images_path, modalities):
     """takes a list of modality strings and loads dicoms into an imvolume dataset from images_path
 
@@ -32,8 +35,6 @@ def loadImages(images_path, modalities):
             return None
         else:
             volumes = {}
-            l1_indent = g_indents[1]
-            l2_indent = g_indents[2]
             for mod in modalities:
                 print_indent('Importing {mod:s} images'.format(mod=mod.upper()), l1_indent)
                 dicom_path = os.path.join(images_path, '{mod:s}'.format(mod=mod))
@@ -68,6 +69,7 @@ def loadROIs(rtstruct_path, verbose=False):
     if (rtstruct_path is not None and os.path.exists(rtstruct_path)):
         # parse rtstruct file and instantiate maskvolume for each contour located
         # add each maskvolume to dict with key set to contour name and number?
+        print_indent('Importing ROIs', l1_indent)
         ds = dicom.read_file(rtstruct_path)
         if (ds is not None):
             # get structuresetROI sequence
@@ -75,7 +77,7 @@ def loadROIs(rtstruct_path, verbose=False):
             nContours = len(StructureSetROI_list)
             if (nContours <= 0):
                 if (verbose):
-                    print('no contours were found')
+                    print_indent('no contours were found', l2_indent)
                 return None
 
             # Add structuresetROI to dict
@@ -99,16 +101,17 @@ def loadROIs(rtstruct_path, verbose=False):
             for roiname, roi in dict(roi_dict).items():
                 if (roi.coordslices is None or len(roi.coordslices) <= 0):
                     if (verbose):
-                        print('pruning empty ROI: {:s} from loaded ROIs'.format(roiname))
+                        print_indent('pruning empty ROI: {:s} from loaded ROIs'.format(roiname), l2_indent)
                     del roi_dict[roiname]
 
+            print_indent('loaded {:d} ROIs succesfully'.format(len(roi_dict)), l2_indent)
             return roi_dict
         else:
-            print('no dataset was found')
+            print_indent('no dataset was found', l2_indent)
             return None
 
     else:
-        print('path invalid: "{:s}"'.format(str(rtstruct_path)))
+        print_indent('path invalid: "{:s}"'.format(str(rtstruct_path)), l2_indent)
         return None
 
 def loadEntropy(entropy_pickle_path, image_volumes, roi=None, radius=4,
@@ -166,7 +169,7 @@ def loadEntropy(entropy_pickle_path, image_volumes, roi=None, radius=4,
                 print_indent('Pickled entropy vector found ({mod:s}). Loading.'.format(mod=mod), l2_indent)
                 try:
                     path = os.path.join(entropy_pickle_path, match)
-                    entropy_volumes[mod] = BaseVolume().fromPickle(path)
+                    entropy_volumes[mod] = MaskableVolume().fromPickle(path)
                 except:
                     print_indent('there was a problem loading the file: {path:s}'.format(path=path),
                                  l2_indent)
