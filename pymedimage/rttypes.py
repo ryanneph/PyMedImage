@@ -126,7 +126,7 @@ class ROI:
                 self.frameofreference = self.getROIExtents(verbose)
 
 
-    def makeDenseMaskSlice(self, position, frameofreference=None):
+    def makeDenseMaskSlice(self, position, frameofreference=None, verbose=False):
         """Takes a FrameOfReference and constructs a dense binary mask for the ROI (1 inside ROI, 0 outside)
         as a numpy 2dArray
 
@@ -156,23 +156,26 @@ class ROI:
             # for each list of coordinate tuples - check the slice for distance from position
             error = abs(position - slice[0][2])
             if error < minerror:
-                if minerror != 5000:
-                    # print(position, slice[0][2])
-                    # print('improved with error {:f}'.format(error))
-                    pass
+                if (verbose):
+                    if minerror != 5000:
+                        print(position, slice[0][2])
+                        print('improved with error {:f}'.format(error))
                 minerror = error
             if (error <= minerror):
                 coordslice = slice
-                # print('updating slice')
+                if (verbose):
+                    print('updating slice')
             else:
                 # we've already passed the nearest slice, break
                 break
 
         # check if our result is actually valid or we just hit the end of the array
         if minerror >= tolerance:
-            # print('No slice found within {:f} mm of position {:f}'.format(tolerance, position))
+            if (verbose):
+                print('No slice found within {:f} mm of position {:f}'.format(tolerance, position))
             return np.ones((rows, cols))
-        # print('slice found at {:f} for position query at {:f}'.format(coordslice[0][2], position))
+        if (verbose):
+            print('slice found at {:f} for position query at {:f}'.format(coordslice[0][2], position))
 
         # get coordinate values
         index_coords = []
@@ -229,7 +232,7 @@ class ROI:
             for i in range(depth):
                 position = zstart + i * zspace
                 # get a slice at every position within the current frameofreference
-                densemaskslice = self.makeDenseMaskSlice(position, frameofreference)
+                densemaskslice = self.makeDenseMaskSlice(position, frameofreference, verbose=verbose)
                 maskslicearray_list.append(densemaskslice.reshape((1, *densemaskslice.shape)))
 
             # construct BaseVolume from dense slice arrays
@@ -446,7 +449,7 @@ class BaseVolume:
         zoomfactors = tuple(zoomfactors)
         if (verbose):
             print('zoom factors (z, y, x): ({:0.3f}, {:0.3f}, {:0.3f})'.format(*zoomfactors))
-        resampled_array = interpolation.zoom(cropped, zoomfactors, order=0, mode='nearest')
+        resampled_array = interpolation.zoom(cropped, zoomfactors, order=3, mode='constant', cval=0)
 
         # reconstruct volume from resampled array
         resampled_volume = BaseVolume().fromArray(resampled_array, frameofreference)
@@ -522,14 +525,14 @@ class BaseVolume:
         (cols, rows, depth) = frameofreference.size
 
         # perform index bounding
-        if (x < 0 or x >= cols):
-            print('x index out of bounds. must be between 0 -> {:d}'.format(cols))
+        if (x < 0 or x >= rows):
+            print('x index out of bounds. must be between 0 -> {:d}'.format(cols-1))
             raise IndexError
         if (y < 0 or y >= cols):
-            print('y index out of bounds. must be between 0 -> {:d}'.format(rows))
+            print('y index out of bounds. must be between 0 -> {:d}'.format(rows-1))
             raise IndexError
         if (z < 0 or z >= depth):
-            print('z index out of bounds. must be between 0 -> {:d}'.format(depth))
+            print('z index out of bounds. must be between 0 -> {:d}'.format(depth-1))
             raise IndexError
 
         return self.array[z, y, x]
@@ -543,13 +546,13 @@ class BaseVolume:
 
         # perform index bounding
         if (x < 0 or x >= cols):
-            print('x index out of bounds. must be between 0 -> {:d}'.format(cols))
+            print('x index out of bounds. must be between 0 -> {:d}'.format(cols-1))
             raise IndexError
-        if (y < 0 or y >= cols):
-            print('y index out of bounds. must be between 0 -> {:d}'.format(rows))
+        if (y < 0 or y >= rows):
+            print('y index out of bounds. must be between 0 -> {:d}'.format(rows-1))
             raise IndexError
         if (z < 0 or z >= depth):
-            print('z index out of bounds. must be between 0 -> {:d}'.format(depth))
+            print('z index out of bounds. must be between 0 -> {:d}'.format(depth-1))
             raise IndexError
 
         # reassign value
@@ -577,7 +580,7 @@ class MaskableVolume(BaseVolume):
         maskable = MaskableVolume().fromArray(base.array, base.frameofreference)
         return maskable
 
-    def getSlice(self, idx, axis=0, rescale=False, flatten=False, roi=None):
+    def getSlice(self, idx, axis=0, rescale=False, flatten=False, roi=None, verbose=False):
         """Extracts 2dArray of idx along the axis.
         Args:
             idx     -- idx identifying the slice along axis
@@ -599,7 +602,7 @@ class MaskableVolume(BaseVolume):
 
         # get equivalent slice from densemaskarray
         if (roi is not None):
-            maskslicearray = roi.makeDenseMask(self.frameofreference).getSlice(idx, axis, rescale, flatten)
+            maskslicearray = roi.makeDenseMask(self.frameofreference, verbose=verbose).getSlice(idx, axis, rescale, flatten)
             # apply mask
             slicearray = np.multiply(slicearray, maskslicearray)
 

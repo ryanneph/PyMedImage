@@ -68,20 +68,20 @@ def create_feature_vector(features, roi=None):
 
         print_indent('combined {n:d} features into array of shape: {shape:s}'.format(
             n=feature_array.shape[1],
-            shape = str(feature_array.shape))
+            shape=str(feature_array.shape))
             , g_indents[1])
-        return feature_array
+        return (feature_array, frameofreference)
 
 
-def cluster(input, k=10, eps=1e-4):
+def cluster(input, n_clusters=10, eps=1e-4):
     """take input feature array of N rows and D columns and perform standard kmeans clustering using \
             sklearn kmeans library
 
     Args:
-        input   --  numpy array of N rows and D columns where N is the number of voxels in the volume and
-                    D is the number of features.
-        k       --  number of clusters
-        eps     --  epsilon convergence criteria
+        input         --  numpy array of N rows and D columns where N is the number of voxels in the
+                            volume and D is the number of features.
+        n_clusters    --  number of clusters
+        eps           --  epsilon convergence criteria
     Returns:
         imvector of cluster assignments from 0 to k-1 aligned to the BaseVolumes of input
     """
@@ -90,16 +90,16 @@ def cluster(input, k=10, eps=1e-4):
         print_indent('a proper numpy ndarray was not provided. skipping.', g_indents[1])
         print_indent(str(type(input)) + str(type(np.ndarray)), g_indents[1])
         return None
-    if (k<=1):
-        k=12
-        print_indent('k must be >1, reassigned to {k:d}'.format(k=k), g_indents[1])
+    if (n_clusters<=1):
+        print_indent('k must be >1', g_indents[1])
+        raise ValueError
 
     # Preprocessing - normalization
     normalizer = StandardScaler()
     normalized_input = normalizer.fit_transform(input)
 
     # create estimator obj
-    km = KMeans(n_clusters=k,
+    km = KMeans(n_clusters=n_clusters,
                 max_iter=300,
                 n_init=10,
                 init='k-means++',
@@ -111,4 +111,3 @@ def cluster(input, k=10, eps=1e-4):
     print_indent('#iters: {:d}'.format(km.n_iter_), g_indents[1])
     print_indent('score: {score:0.4f}'.format(score=km.score(normalized_input)), g_indents[1])
     return km.predict(normalized_input)
-

@@ -4,7 +4,7 @@ features.py
 Utility functions for calculating common image features
 """
 import numpy as np
-from .rttypes import BaseVolume, MaskableVolume
+from .rttypes import BaseVolume, MaskableVolume, FrameOfReference
 from .logging import g_indents, print_indent, print_timer
 import time
 import pycuda.autoinit
@@ -70,6 +70,12 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
     # timing
     start_entropy_calc = time.time()
 
+    # set calculation bounds
+    cstart, cstop = 0, c
+    rstart, rstop = 0, r
+    dstart, dstop = 0, d
+
+    # restrict calculation bounds to roi
     if (roi is not None):
         # get max extents of the mask/ROI to speed up calculation only within ROI cubic volume
         extents = roi.getROIExtents()
@@ -83,21 +89,43 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
                                                                                   ystop=rstop,
                                                                                   xstart=cstart,
                                                                                   xstop=cstop ), l4)
+        # redefine H
+        d_subset = dstop - dstart
+        r_subset = rstop - rstart
+        c_subset = cstop - cstart
+        entropy_frameofreference = FrameOfReference((extents.start),
+                                                    (image_volume.frameofreference.spacing),
+                                                    (c_subset, r_subset, d_subset))
+        H = MaskableVolume().fromArray(np.zeros((d_subset, r_subset, c_subset)), entropy_frameofreference)
+    else:
+        d_subset = dstop - dstart
+        r_subset = rstop - rstart
+        c_subset = cstop - cstart
 
     # nested loop approach -> slowest, try GPU next
-    idx = -1
     total_voxels = d * r * c
-    subset_idx = 0
-    subset_total_voxels = (dstop-dstart+1) * (cstop-cstart+1) * (rstop-rstart+1)
-    onepercent = round(subset_total_voxels / 100)
-    fivepercent = 5*onepercent
-    for z in range(d):
-        for y in range(r):
-            for x in range(c):
+    subset_total_voxels = d_subset * r_subset * c_subset
+    onepercent = int(subset_total_voxels / 100)
+    fivepercent = int(subset_total_voxels / 100 * 5)
+
+    idx = -1
+    subset_idx = -1
+    z_idx = -1
+    for z in range(dstart, dstop):
+        z_idx += 1
+        y_idx = -1
+        x_idx = -1
+        for y in range(rstart, rstop):
+            y_idx += 1
+            x_idx = -1
+            for x in range(cstart, cstop):
+                x_idx += 1
                 idx += 1
                 if (z<dstart or z>dstop or y<rstart or y>rstop or x<cstart or x>cstop):
+                    # we shouldnt ever be here
+                    print('why are we here?!')
                     #fill 0 instead
-                    set_val(H, z, y, x, 0)
+                    set_val(H, z_idx, y_idx, x_idx, 0)
                 else:
                     subset_idx += 1
                     if ( verbose and (subset_idx % fivepercent == 0 or subset_idx == subset_total_voxels-1)):
@@ -106,7 +134,6 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
                             i=subset_idx,
                             tot=subset_total_voxels,
                             abstot=total_voxels), l4)
-                    #print('z:{z:d}, y:{y:d}, x:{x:d}'.format(z=z,y=y,x=x))
                     val_counts = {}
                     for k_z in z_radius_range:
                         for k_x in range(-radius, radius+1):
@@ -126,8 +153,8 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
                         val_probs[i] = val_counts[val]/total_counts
                     # calculate local entropy
                     h = -np.sum(val_probs*np.log(val_probs)) #/ np.log(65536)
-                    set_val(H, z, y, x, h)
-                    if (False and verbose and (subset_idx % onepercent == 0 or subset_idx == subset_total_voxels-1)):
+                    set_val(H, z_idx, y_idx, x_idx, h)
+                    if (False and verbose and (subset_idx % fivepercent == 0 or subset_idx == subset_total_voxels-1)):
                         print('total counts: ' + str(total_counts))
                         print('val_probs = ' + str(val_probs))
                         print('entropy at ({x:d}, {y:d}, {z:d})= {e:f}'.format(
@@ -137,7 +164,7 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
                             e=h))
     if isinstance(image_volume, np.ndarray) and d == 1:
         # need to reshape ndarray if input was 2d
-        H = H.reshape((r, c))
+        H = H.reshape((r_subset, c_subset))
 
 
     end_entropy_calc = time.time()

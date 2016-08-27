@@ -7,7 +7,7 @@ import os
 import dicom
 from .rttypes import BaseVolume, MaskableVolume, ROI
 from .logging import print_indent, g_indents
-from . import features
+from . import features, dcmio
 
 l1_indent = g_indents[1]
 l2_indent = g_indents[2]
@@ -66,52 +66,58 @@ def loadROIs(rtstruct_path, verbose=False):
     Returns:
         dict<key='contour name', val=ROI>
     """
-    if (rtstruct_path is not None and os.path.exists(rtstruct_path)):
-        # parse rtstruct file and instantiate maskvolume for each contour located
-        # add each maskvolume to dict with key set to contour name and number?
-        print_indent('Importing ROIs', l1_indent)
-        ds = dicom.read_file(rtstruct_path)
-        if (ds is not None):
-            # get structuresetROI sequence
-            StructureSetROI_list = ds.StructureSetROISequence
-            nContours = len(StructureSetROI_list)
-            if (nContours <= 0):
-                if (verbose):
-                    print_indent('no contours were found', l2_indent)
-                return None
+    if (not os.path.exists(rtstruct_path)):
+        print_indent('invalid path provided: "{:s}"'.format(rtstruct_path), l2_indent)
+        raise ValueError
 
-            # Add structuresetROI to dict
-            StructureSetROI_dict = {StructureSetROI.ROINumber: StructureSetROI
-                                    for StructureSetROI
-                                    in StructureSetROI_list }
+    print_indent('Importing ROIs', l1_indent)
 
-            # get dict containing a contour dataset for each StructureSetROI with a paired key=ROINumber
-            ROIContour_dict = {ROIContour.ReferencedROINumber: ROIContour
-                               for ROIContour
-                               in ds.ROIContourSequence }
+    # search recursively for a valid rtstruct file
+    ds_list = dcmio.read_dicom_dir(rtstruct_path, recursive=True, verbose=verbose)
+    if (ds_list is None or len(ds_list) == 0):
+        print('no rtstruct datasets found at "{:s}"'.format(rtstruct_path))
+        raise Exception
 
-            # construct a dict of ROI objects where contour name is key
-            roi_dict = {}
-            for ROINumber, structuresetroi in StructureSetROI_dict.items():
-                roi_dict[structuresetroi.ROIName] = (ROI(frameofreference=None,
-                                                         roicontour=ROIContour_dict[ROINumber],
-                                                         structuresetroi=structuresetroi,
-                                                         verbose=verbose))
-            # prune empty ROIs from dict
-            for roiname, roi in dict(roi_dict).items():
-                if (roi.coordslices is None or len(roi.coordslices) <= 0):
-                    if (verbose):
-                        print_indent('pruning empty ROI: {:s} from loaded ROIs'.format(roiname), l2_indent)
-                    del roi_dict[roiname]
-
-            print_indent('loaded {:d} ROIs succesfully'.format(len(roi_dict)), l2_indent)
-            return roi_dict
-        else:
-            print_indent('no dataset was found', l2_indent)
+    # parse rtstruct file and instantiate maskvolume for each contour located
+    # add each maskvolume to dict with key set to contour name and number?
+    ds = ds_list[0]
+    if (ds is not None):
+        # get structuresetROI sequence
+        StructureSetROI_list = ds.StructureSetROISequence
+        nContours = len(StructureSetROI_list)
+        if (nContours <= 0):
+            if (verbose):
+                print_indent('no contours were found', l2_indent)
             return None
 
+        # Add structuresetROI to dict
+        StructureSetROI_dict = {StructureSetROI.ROINumber: StructureSetROI
+                                for StructureSetROI
+                                in StructureSetROI_list }
+
+        # get dict containing a contour dataset for each StructureSetROI with a paired key=ROINumber
+        ROIContour_dict = {ROIContour.ReferencedROINumber: ROIContour
+                           for ROIContour
+                           in ds.ROIContourSequence }
+
+        # construct a dict of ROI objects where contour name is key
+        roi_dict = {}
+        for ROINumber, structuresetroi in StructureSetROI_dict.items():
+            roi_dict[structuresetroi.ROIName] = (ROI(frameofreference=None,
+                                                     roicontour=ROIContour_dict[ROINumber],
+                                                     structuresetroi=structuresetroi,
+                                                     verbose=verbose))
+        # prune empty ROIs from dict
+        for roiname, roi in dict(roi_dict).items():
+            if (roi.coordslices is None or len(roi.coordslices) <= 0):
+                if (verbose):
+                    print_indent('pruning empty ROI: {:s} from loaded ROIs'.format(roiname), l2_indent)
+                del roi_dict[roiname]
+
+        print_indent('loaded {:d} ROIs succesfully'.format(len(roi_dict)), l2_indent)
+        return roi_dict
     else:
-        print_indent('path invalid: "{:s}"'.format(str(rtstruct_path)), l2_indent)
+        print_indent('no dataset was found', l2_indent)
         return None
 
 def loadEntropy(entropy_pickle_path, image_volumes, roi=None, radius=4,
