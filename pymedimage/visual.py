@@ -3,10 +3,47 @@
 Plotting library for rttypes
 """
 
+import os
 import math
 import numpy as np
 
-def tile(array_list, perrow, square=False):
+def writeFigureToFile(fig, path, removeaxes=True, overwrite=False):
+    """Standardized method to write figure to file with existence checking and overwrite switch
+
+    Args:
+        fig         -- matplotlib figure instance
+        path        -- string containing full output path and extension
+
+    Optional Args:
+        removeaxes  -- boolean: remove axes labels and ticks?
+        overwrite   -- boolean: overwrite existing file at path?
+    """
+    if (removeaxes):
+        for ax in fig.axes:
+            ax.set_xticklabels([])
+            ax.set_xticks([])
+            ax.set_yticklabels([])
+            ax.set_yticks([])
+
+    # save to file
+    try:
+        saved = False
+        exists = os.path.exists(path)
+        if (overwrite or not exists):
+            fig.savefig(path, bbox_inches='tight')
+            saved = True
+
+    except Exception as details:
+        print('there was an error in saving the figure to: {:s}'.format(path))
+        print(details)
+    else:
+        if (saved):
+            if (overwrite and exists):
+                print('image overwritten at: {:s}'.format(path))
+            else:
+                print('image saved to: {:s}'.format(path))
+
+def tile(array_list, perrow, square=False, pad_width=5, pad_intensity=1000):
     """Takes a list of arrays and number of images per row and constructs a tiled array for margin-less
     visualization
 
@@ -48,7 +85,13 @@ def tile(array_list, perrow, square=False):
     if (square):
         # try to make length and width equal by tiling vertically, leaving a space and continuing in
         # another column to the right
-        pad = 10
+        if (pad_width >= 0):
+            pad = pad_width
+        else:
+            pad = 0
+        if (pad_intensity <= 0):
+            pad_intensity = 0
+
         rows = len(rows_list) * expect_row_shape[0]
         cols = expect_row_shape[1]
         # get area, then find side length that will work best
@@ -66,8 +109,8 @@ def tile(array_list, perrow, square=False):
                     cols_list.append(this_col_array)
                     this_col_array = None
                     # add padding column
-                    if (i < len(rows_list)-1):
-                        cols_list.append(1000 * np.ones((pref_rows * expect_row_shape[0], pad)))
+                    if (pad > 0 and i < len(rows_list)-1):
+                        cols_list.append(pad_intensity * np.ones((pref_rows * expect_row_shape[0], pad)))
 
                 # start new column
                 this_col_array = row
