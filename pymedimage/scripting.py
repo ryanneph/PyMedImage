@@ -13,7 +13,7 @@ l1_indent = g_indents[1]
 l2_indent = g_indents[2]
 
 def loadImages(images_path, modalities):
-    """takes a list of modality strings and loads dicoms into an imvolume dataset from images_path
+    """takes a list of modality strings and loads dicoms as a MaskableVolume instance from images_path
 
     Args:
         images_path --  Full path to patient specific directory containing various modality dicom images
@@ -30,6 +30,7 @@ def loadImages(images_path, modalities):
         return None
     else:
         # load imvector and store to dictionary for each modality
+        # if modality is missing, dont add to dictionary
         if (modalities is None or len(modalities)==0):
             print('No modalities supplied. skipping')
             return None
@@ -41,10 +42,12 @@ def loadImages(images_path, modalities):
 
                 if (os.path.exists(dicom_path)):
                     # recursively walk modality path for dicom images, and build a dataset from it
-                    volumes[mod] = MaskableVolume().fromDir(dicom_path, recursive=True)
-                    volume = volumes[mod]
-                    if (volume is not None):
-                        size = volume.frameofreference.size
+                    try:
+                        volumes[mod] = MaskableVolume().fromDir(dicom_path, recursive=True)
+                    except:
+                        print('failed to create Volume for modality: {:s}'.format(mod))
+                    else:
+                        size = volumes[mod].frameofreference.size
                         print_indent('stacked {len:d} datasets of shape: ({d:d}, {r:d}, {c:d})'.format(
                                       len=size[2],
                                       d=1,
@@ -121,10 +124,9 @@ def loadROIs(rtstruct_path, verbose=False):
         return None
 
 def loadEntropy(entropy_pickle_path, image_volumes, roi=None, radius=4,
-                savePickle=True, verbose=False):
+                savePickle=True, recalculate=False, verbose=False):
     """Checks if entropy vector has already been pickled at path specified and
     loads the files if so, or computes entropy for each modality and pickles for later access.
-    Returns tuple of entropy imvectors (CT_entropy, PET_entropy)
 
     Args:
         entropy_pickle_path --  should be the full path to the patient specific "precomputed" dir.
@@ -132,6 +134,8 @@ def loadEntropy(entropy_pickle_path, image_volumes, roi=None, radius=4,
             modality string and "entropy" are both present.
         image_volumes       --  dictionary of {modality, BaseVolume} that contains loaded image data for
             each modality supported
+    Returns:
+        dict<key=mod, value=MaskableVolume>
     """
     # check if path specified exists
     if (not os.path.exists(entropy_pickle_path)):
@@ -163,15 +167,19 @@ def loadEntropy(entropy_pickle_path, image_volumes, roi=None, radius=4,
             entropy_volumes[mod] = None
             # find first pickle that matches modality string or compute entropy fresh for that modality
             if (roi is not None):
-                # match with modality and ROIName
+                # match with modality and ROIName - gets first match and stops
                 match = next((f for f in files
                               if (mod in f.lower()
-                                  and roi.roiname.lower() in f.lower())), None)  # gets first match and stops
+                                  and roi.roiname.lower() in f.lower()
+                                  and 'rad{:d}'.format(radius) in f.lower())), None)
             else:
-                # match with modality
-                match = next((f for f in files if (mod in f.lower()) ), None)  # gets first match and stops
-            if (match is not None):
-                # found pickled entropy vector, load it and add to dict
+                # match with modality - gets first match and stops
+                match = next((f for f in files
+                              if (mod in f.lower()
+                                  and 'rad{:d}'.format(radius) in f.lower()) ), None)
+
+            if (not recalculate and match is not None):
+                # found pickled entropy vector, load it and add to dict - no need to calculate entropy
                 print_indent('Pickled entropy vector found ({mod:s}). Loading.'.format(mod=mod), l2_indent)
                 try:
                     path = os.path.join(entropy_pickle_path, match)
@@ -184,40 +192,41 @@ def loadEntropy(entropy_pickle_path, image_volumes, roi=None, radius=4,
                     print_indent('Pickled {mod:s} entropy vector loaded successfully.'.format(
                         mod=mod.upper()), l2_indent)
             else:
-                # if no file is matched for that modality, calculate instead if image dicom files are
-                #   present for that modality
-                # no match, compute entropy
-                print_indent('No pickled entropy vector found ({mod:s})'.format(mod=mod), l2_indent)
-                # check for presence of image vector in modality
-                image_volume = image_volumes[mod]
-                if image_volume is not None:
-                    print_indent('Computing entropy now...'.format(mod=mod), l2_indent)
-                    entropy_volumes[mod] = features.image_entropy(image_volume, roi=roi,
-                                                                  radius=radius, verbose=verbose)
-                    if entropy_volumes[mod] is None:
-                        print_indent('Failed to compute entropy for {mod:s} images.'.format(
-                            mod=mod.upper()), l2_indent)
-                    else:
-                        print_indent('Entropy computed successfully', l2_indent)
-                        # pickle for later recall
-                        if (roi is not None):
-                            # append ROIName to pickle path
-                            pickle_dump_path = os.path.join(entropy_pickle_path,
-                              '{mod:s}_mask_{roiname:s}_entropy.pickle'.format(mod=mod, roiname=roi.roiname))
-                        else:
-                            # dont append roiname to pickle path
-                            pickle_dump_path = os.path.join(entropy_pickle_path,
-                                                            '{mod:s}_entropy.pickle'.format(mod=mod))
-                        try:
-                            entropy_volumes[mod].toPickle(pickle_dump_path)
-                        except:
-                            print_indent('error pickling: {:s}'.format(pickle_dump_path), l2_indent)
-                        else:
-                            print_indent('entropy pickled successfully to:\n{:s}'.format(pickle_dump_path),
-                                         l2_indent)
+                # Calculate entropy this time
+                if (match is not None):
+                    # force calculation of entropy
+                    print_indent('Recalculating entropy as requested', l2_indent)
                 else:
-                    print_indent('No {mod:s} image vector was supplied.'
-                                 ' Could not compute entropy.'.format(mod=mod.upper()), l2_indent)
+                    # if no file is matched for that modality, calculate instead if image dicom files are
+                    # present for that modality
+                    print_indent('No pickled entropy vector found ({mod:s})'.format(mod=mod), l2_indent)
+
+                print_indent('Computing entropy now...'.format(mod=mod), l2_indent)
+                entropy_volumes[mod] = features.image_entropy(image_volumes[mod], roi=roi,
+                                                              radius=radius, verbose=verbose)
+                if entropy_volumes[mod] is None:
+                    print_indent('Failed to compute entropy for {mod:s} images.'.format(
+                        mod=mod.upper()), l2_indent)
+                else:
+                    print_indent('Entropy computed successfully', l2_indent)
+                    # pickle for later recall
+                    if (roi is not None):
+                        # append ROIName to pickle path
+                        pickle_dump_path = os.path.join(entropy_pickle_path,
+                            'entropy_{mod:s}_roi_{roiname:s}_rad{rad:d}.pickle'.format(mod=mod,
+                                                                                    roiname=roi.roiname,
+                                                                                    rad=radius))
+                    else:
+                        # dont append roiname to pickle path
+                        pickle_dump_path = os.path.join(entropy_pickle_path,
+                                'entropy_{mod:s}_rad{rad:d}.pickle'.format(mod=mod, rad=radius))
+                    try:
+                        entropy_volumes[mod].toPickle(pickle_dump_path)
+                    except:
+                        print_indent('error pickling: {:s}'.format(pickle_dump_path), l2_indent)
+                    else:
+                        print_indent('entropy pickled successfully to:\n{:s}'.format(pickle_dump_path),
+                                     l2_indent)
             print()
 
         # return dict of modality specific entropy imvectors with keys defined by keys for image_volumes arg.

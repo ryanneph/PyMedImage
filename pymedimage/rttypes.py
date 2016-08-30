@@ -334,6 +334,10 @@ class BaseVolume:
         Args:
             slices
         """
+        if (dataset_list is None):
+            print('no valid dataset_list provided')
+            raise ValueError
+
         # check that all elements are valid slices, if not remove and continue
         nRemoved = 0
         for i, slice in enumerate(dataset_list):
