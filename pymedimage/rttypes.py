@@ -4,6 +4,7 @@ Datatypes for general dicom processing including masking, rescaling, and fusion
 """
 
 import os
+import logging
 import numpy as np
 import dicom  # pydicom
 import pickle
@@ -11,7 +12,9 @@ from PIL import Image, ImageDraw
 from scipy.ndimage import interpolation
 from . import dcmio, misc
 
-
+# initialize module logger
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 class RescaleParams:
     """Defines the scale and offset necessary for linear rescaling operation of dicom data
@@ -104,12 +107,12 @@ class ROI:
         contoursequence = roicontour.ContourSequence
         if (len(contoursequence) <= 0):
             if (verbose):
-                print('no coordinates found in roi: {:s}'.format(self.roiname))
+                logger.info('no coordinates found in roi: {:s}'.format(self.roiname))
             self.coordslices = None
         else:
             self.coordslices = []
             if (verbose):
-                print('loading roi: {:s} with {:d} slices'.format(self.roiname, len(roicontour.ContourSequence)))
+                logger.info('loading roi: {:s} with {:d} slices'.format(self.roiname, len(roicontour.ContourSequence)))
             for coordslice in roicontour.ContourSequence:
                 points_list = []
                 for x, y, z in misc.grouper(3, coordslice.ContourData):
@@ -142,7 +145,7 @@ class ROI:
             if (self.frameofreference is not None):
                 frameofreference = self.frameofreference
             else:
-                print('no frame of reference provided')
+                logger.info('no frame of reference provided')
                 raise Exception
         xstart, ystart, zstart = frameofreference.start
         xspace, yspace, zspace = frameofreference.spacing
@@ -158,13 +161,13 @@ class ROI:
             if error < minerror:
                 if (verbose):
                     if minerror != 5000:
-                        print(position, slice[0][2])
-                        print('improved with error {:f}'.format(error))
+                        logger.info(position, slice[0][2])
+                        logger.info('improved with error {:f}'.format(error))
                 minerror = error
             if (error <= minerror):
                 coordslice = slice
                 if (verbose):
-                    print('updating slice')
+                    logger.info('updating slice')
             else:
                 # we've already passed the nearest slice, break
                 break
@@ -172,10 +175,10 @@ class ROI:
         # check if our result is actually valid or we just hit the end of the array
         if minerror >= tolerance:
             if (verbose):
-                print('No slice found within {:f} mm of position {:f}'.format(tolerance, position))
+                logger.info('No slice found within {:f} mm of position {:f}'.format(tolerance, position))
             return np.ones((rows, cols))
         if (verbose):
-            print('slice found at {:f} for position query at {:f}'.format(coordslice[0][2], position))
+            logger.info('slice found at {:f} for position query at {:f}'.format(coordslice[0][2], position))
 
         # get coordinate values
         index_coords = []
@@ -209,7 +212,7 @@ class ROI:
             if (self.frameofreference is not None):
                 frameofreference = self.frameofreference
             else:
-                print('no frame of reference provided')
+                logger.info('no frame of reference provided')
                 raise Exception
 
         # check cache for similarity between previously and currently supplied frameofreference objects
@@ -217,7 +220,7 @@ class ROI:
                 and frameofreference == self.__cache_densemask.frameofreference):
             # cached mask frameofreference is similar to current, return cached densemask volume
             if (verbose):
-                print('using cached dense mask volume')
+                logger.info('using cached dense mask volume')
             return self.__cache_densemask
         else:
             xstart, ystart, zstart = frameofreference.start
@@ -335,20 +338,20 @@ class BaseVolume:
             slices
         """
         if (dataset_list is None):
-            print('no valid dataset_list provided')
+            logger.info('no valid dataset_list provided')
             raise ValueError
 
         # check that all elements are valid slices, if not remove and continue
         nRemoved = 0
         for i, slice in enumerate(dataset_list):
             if (not isinstance(slice, dicom.dataset.Dataset)):
-                print('invalid type ({t:s}) at idx {i:d}. removing.'.format(
+                logger.info('invalid type ({t:s}) at idx {i:d}. removing.'.format(
                     t=str(type(slice)),
                     i=i ) )
                 dataset_list.remove(slice)
                 nRemoved += 1
         if (nRemoved > 0):
-            print('# slices removed with invalid types: {:d}'.format(nRemoved))
+            logger.info('# slices removed with invalid types: {:d}'.format(nRemoved))
 
         # sort datasets by increasing slicePosition (inferior -> superior)
         dataset_list.sort(key=lambda dataset: dataset.ImagePositionPatient[2], reverse=False)
@@ -384,7 +387,7 @@ class BaseVolume:
         """initialize BaseVolume from unchanging format so features can be stored and recalled long term
         """
         if (not os.path.exists(pickle_path)):
-            print('file at path: {:s} doesn\'t exists'.format(pickle_path))
+            logger.info('file at path: {:s} doesn\'t exists'.format(pickle_path))
         with open(pickle_path, 'rb') as p:
             basevolumepickle = pickle.load(p)
 
@@ -419,7 +422,7 @@ class BaseVolume:
         """
         # conform volume to alternate FrameOfReference
         if (frameofreference is None):
-            print('no FrameOfReference provided')
+            logger.info('no FrameOfReference provided')
             raise ValueError
         elif (FrameOfReference.__name__ not in str(type(frameofreference))):  # This is an ugly way of type-checking but cant get isinstance to see both as the same
             print('supplied frameofreference of type: "{:s}" must be of the type: "FrameOfReference"'.format(
@@ -441,9 +444,9 @@ class BaseVolume:
                     str(frameofreference.spacing),
                     str(frameofreference.size)))
             """
-            print('uncropped shape (z,y,x): {:s}'.format(str(self.array.shape)))
-            print('cropped shape(z,y,x): {:s}'.format(str(cropped.shape)))
-            print('frameofreference shape (z,y,x): ({:d}, {:d}, {:d})'.format(frameofreference.size[2],
+            logger.info('uncropped shape (z,y,x): {:s}'.format(str(self.array.shape)))
+            logger.info('cropped shape(z,y,x): {:s}'.format(str(cropped.shape)))
+            logger.info('frameofreference shape (z,y,x): ({:d}, {:d}, {:d})'.format(frameofreference.size[2],
                                                                frameofreference.size[1],
                                                                frameofreference.size[0]))
 
@@ -452,7 +455,7 @@ class BaseVolume:
             zoomfactors.insert(i, frameofreference.size[2-i] / cropped.shape[i])
         zoomfactors = tuple(zoomfactors)
         if (verbose):
-            print('zoom factors (z, y, x): ({:0.3f}, {:0.3f}, {:0.3f})'.format(*zoomfactors))
+            logger.info('zoom factors (z, y, x): ({:0.3f}, {:0.3f}, {:0.3f})'.format(*zoomfactors))
         resampled_array = interpolation.zoom(cropped, zoomfactors, order=3, mode='constant', cval=0)
 
         # reconstruct volume from resampled array
@@ -480,21 +483,21 @@ class BaseVolume:
         # perform index bounding
         if (axis==0):
             if (idx < 0 or idx >= depth):
-                print('index out of bounds. must be between 0 -> {:d}'.format(depth))
+                logger.info('index out of bounds. must be between 0 -> {:d}'.format(depth))
                 raise IndexError
             thisslice = self.array[idx, :, :]
         elif (axis==1):
             if (idx < 0 or idx >= rows):
-                print('index out of bounds. must be between 0 -> {:d}'.format(rows))
+                logger.info('index out of bounds. must be between 0 -> {:d}'.format(rows))
                 raise IndexError
             thisslice = self.array[:, idx, :]
         elif (axis==2):
             if (idx < 0 or idx >= cols):
-                print('index out of bounds. must be between 0 -> {:d}'.format(cols))
+                logger.info('index out of bounds. must be between 0 -> {:d}'.format(cols))
                 raise IndexError
             thisslice = self.array[:, :, idx]
         else:
-            print('invalid axis supplied. must be between 0 -> 2')
+            logger.info('invalid axis supplied. must be between 0 -> 2')
             raise ValueError
 
         # RESCALE
@@ -502,7 +505,7 @@ class BaseVolume:
             if (self.rescaleparams is not None):
                 thisslice = self.rescaledArray(thisslice, rescale)
             else:
-                print('No RescaleParams assigned to self.rescaleparams')
+                logger.info('No RescaleParams assigned to self.rescaleparams')
                 raise Exception
 
         # RESHAPE
@@ -530,13 +533,13 @@ class BaseVolume:
 
         # perform index bounding
         if (x < 0 or x >= rows):
-            print('x index out of bounds. must be between 0 -> {:d}'.format(cols-1))
+            logger.info('x index out of bounds. must be between 0 -> {:d}'.format(cols-1))
             raise IndexError
         if (y < 0 or y >= cols):
-            print('y index out of bounds. must be between 0 -> {:d}'.format(rows-1))
+            logger.info('y index out of bounds. must be between 0 -> {:d}'.format(rows-1))
             raise IndexError
         if (z < 0 or z >= depth):
-            print('z index out of bounds. must be between 0 -> {:d}'.format(depth-1))
+            logger.info('z index out of bounds. must be between 0 -> {:d}'.format(depth-1))
             raise IndexError
 
         return self.array[z, y, x]
@@ -550,13 +553,13 @@ class BaseVolume:
 
         # perform index bounding
         if (x < 0 or x >= cols):
-            print('x index out of bounds. must be between 0 -> {:d}'.format(cols-1))
+            logger.info('x index out of bounds. must be between 0 -> {:d}'.format(cols-1))
             raise IndexError
         if (y < 0 or y >= rows):
-            print('y index out of bounds. must be between 0 -> {:d}'.format(rows-1))
+            logger.info('y index out of bounds. must be between 0 -> {:d}'.format(rows-1))
             raise IndexError
         if (z < 0 or z >= depth):
-            print('z index out of bounds. must be between 0 -> {:d}'.format(depth-1))
+            logger.info('z index out of bounds. must be between 0 -> {:d}'.format(depth-1))
             raise IndexError
 
         # reassign value

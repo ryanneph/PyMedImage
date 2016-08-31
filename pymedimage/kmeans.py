@@ -1,8 +1,13 @@
 """implementation of standard kmeans clustering"""
+import logging
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 import numpy as np
-from utils.logging import print_indent, g_indents
+from .misc import indent, g_indents
+
+# initialize module logger
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 def create_feature_vector(features, roi=None):
     """takes a list of feature BaseVolumes and combines them into a numpy ndarray of N rows and D features
@@ -18,7 +23,7 @@ def create_feature_vector(features, roi=None):
                         in the list (len(features))
     """
     if len(features) <= 0:
-        print_indent('no features supplied. skipping', g_indents[1])
+        logger.info(indent('no features supplied. skipping', g_indents[1]))
         return None
     else:
         if (roi is not None):
@@ -38,14 +43,14 @@ def create_feature_vector(features, roi=None):
 
         # take the first feature vectors shape to be the reference
         ref_shape = frameofreference.size[::-1]  # reverses tuple from (x,y,z) to (z,y,x)
-        print('Common Shape (z,y,x): ({:d}, {:d}, {:d})'.format(*ref_shape))
+        logger.info('Common Shape (z,y,x): ({:d}, {:d}, {:d})'.format(*ref_shape))
 
         # create list of commonly shaped feature vectors
         conformed_feature_list = []
         for i, feature in enumerate(features):
             # check for invalid feature
             if (feature is None):
-                print('empty (None) feature provided at index {:d}, removing and continuing'.format(i))
+                logger.info('empty (None) feature provided at index {:d}, removing and continuing'.format(i))
                 features.remove(feature)
                 continue
 
@@ -53,11 +58,11 @@ def create_feature_vector(features, roi=None):
             conformed_feature = feature.conformTo(frameofreference)
 
             if (conformed_feature.array.shape != ref_shape):
-                print_indent('shape mismatch. ref={ref:s} != feature[{num:d}]={shape:s}.'
+                logger.info(indent('shape mismatch. ref={ref:s} != feature[{num:d}]={shape:s}.'
                 ' removing and continuing'.format(ref=str(ref_shape),
                                                   num=i,
                                                   shape=str(conformed_feature.array.shape))
-                                                  , g_indents[1])
+                                                  , g_indents[1]))
                 continue
             else:
                 # concatenate, need to make feat.array a 2d vector
@@ -66,10 +71,10 @@ def create_feature_vector(features, roi=None):
         # combine accepted features into array of shape (nSamples, nFeatures)
         feature_array = np.concatenate(conformed_feature_list, axis=1)
 
-        print_indent('combined {n:d} features into array of shape: {shape:s}'.format(
+        logger.info(indent('combined {n:d} features into array of shape: {shape:s}'.format(
             n=feature_array.shape[1],
             shape=str(feature_array.shape))
-            , g_indents[1])
+            , g_indents[1]))
         return (feature_array, frameofreference)
 
 
@@ -87,11 +92,11 @@ def cluster(input, n_clusters=10, eps=1e-4):
     """
     # check inputs
     if not isinstance(input, np.ndarray):
-        print_indent('a proper numpy ndarray was not provided. skipping.', g_indents[1])
-        print_indent(str(type(input)) + str(type(np.ndarray)), g_indents[1])
+        logger.info(indent('a proper numpy ndarray was not provided. skipping.', g_indents[1]))
+        logger.info(indent(str(type(input)) + str(type(np.ndarray)), g_indents[1]))
         return None
     if (n_clusters<=1):
-        print_indent('k must be >1', g_indents[1])
+        logger.info(indent('k must be >1', g_indents[1]))
         raise ValueError
 
     # Preprocessing - normalization
@@ -108,6 +113,6 @@ def cluster(input, n_clusters=10, eps=1e-4):
                 n_jobs=-3
                 )
     km.fit(normalized_input)
-    print_indent('#iters: {:d}'.format(km.n_iter_), g_indents[1])
-    print_indent('score: {score:0.4f}'.format(score=km.score(normalized_input)), g_indents[1])
+    logger.info(indent('#iters: {:d}'.format(km.n_iter_), g_indents[1]))
+    logger.info(indent('score: {score:0.4f}'.format(score=km.score(normalized_input)), g_indents[1]))
     return km.predict(normalized_input)

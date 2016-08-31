@@ -4,8 +4,13 @@ Plotting library for rttypes
 """
 
 import os
+import logging
 import math
 import numpy as np
+
+# initialize module logger
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 def writeFigureToFile(fig, path, removeaxes=True, overwrite=False):
     """Standardized method to write figure to file with existence checking and overwrite switch
@@ -37,14 +42,14 @@ def writeFigureToFile(fig, path, removeaxes=True, overwrite=False):
             saved = True
 
     except Exception as details:
-        print('there was an error in saving the figure to: {:s}'.format(path))
-        print(details)
+        logger.info('there was an error in saving the figure to: {:s}'.format(path))
+        logger.info(details)
     else:
         if (saved):
             if (overwrite and exists):
-                print('image overwritten at: {:s}'.format(path))
+                logger.info('image overwritten at: {:s}'.format(path))
             else:
-                print('image saved to: {:s}'.format(path))
+                logger.info('image saved to: {:s}'.format(path))
 
 def tile(array_list, perrow, square=False, pad_width=5, pad_intensity=1000):
     """Takes a list of arrays and number of images per row and constructs a tiled array for margin-less

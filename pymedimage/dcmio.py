@@ -7,12 +7,14 @@ workable datasets for later use in projects
 
 import os
 import sys
-import pickle
-import dicom # pydicom
-import numpy as np
-from .logging import print_indent, g_indents
+import logging
+import dicom
+from .misc import indent, g_indents
 from string import Template
 
+# initialize module logger
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 def write_dicom(path, dataset):
     """write a pydicom dataset to dicom file"""
@@ -39,7 +41,7 @@ def read_dicom_dir(path, recursive=False, verbose=0):
     ds_list = []
     dicom_paths = []
     if (not os.path.exists(path)):
-        print('Execution Terminated. Supplied path did not exist: {:s}'.format(path))
+        logger.info('Execution Terminated. Supplied path did not exist: {:s}'.format(path))
         sys.exit(1)
     else:
         l1_indent = g_indents[2]
@@ -49,7 +51,7 @@ def read_dicom_dir(path, recursive=False, verbose=0):
         if recursive:
             extra = ' and subdirs'
         printstring = printstring.substitute(extra=extra).format(path)
-        print_indent(printstring, l1_indent)
+        logger.info(indent(printstring, l1_indent))
         for root, dirs, files in os.walk(path, topdown=True):
             # build the list of valid dicom file paths then load them after walk
             for file in files:
@@ -63,13 +65,13 @@ def read_dicom_dir(path, recursive=False, verbose=0):
         # Now read the dicom files that were located within path
         if verbose == 1:
             #low verbosity
-            print_indent(dicom_paths[:5],l2_indent)
+            logger.info(indent(dicom_paths[:5],l2_indent))
         elif verbose == 2:
             #high verbosity
-            print_indent(dicom_paths[:20],l2_indent)
+            logger.info(indent(dicom_paths[:20],l2_indent))
         elif verbose > 2:
             #full verbosity
-            print_indent(dicom_paths,l2_indent)
+            logger.info(indent(dicom_paths,l2_indent))
 
         if (len(dicom_paths)>0):
             for file in dicom_paths:

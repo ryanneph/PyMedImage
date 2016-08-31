@@ -3,14 +3,19 @@ features.py
 
 Utility functions for calculating common image features
 """
+import logging
 import numpy as np
 from .rttypes import BaseVolume, MaskableVolume, FrameOfReference
-from .logging import g_indents, print_indent, print_timer
+from .misc import g_indents, indent, timer
 import time
 import pycuda.autoinit
 import pycuda.driver as cuda
 from pycuda.compiler import SourceModule
 pycuda.compiler.DEFAULT_NVCC_FLAGS = ['--std=c++11']
+
+# initialize module logger
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 # indent shortnames
 l3 = g_indents[3]
@@ -53,18 +58,18 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
         def set_val(image, z, y, x, val):
             image[z, y, x] = val
     else:
-        print('invalid image type supplied ({:s}). Please specify an image of type BaseVolume \
+        logger.info('invalid image type supplied ({:s}). Please specify an image of type BaseVolume \
             or type np.ndarray'.format(str(type(image_volume))))
         return None
 
     # z_radius_range controls 2d neighborhood vs 3d neighborhood for 2d vs 3d images
     if d == 1: #2D image
         if verbose:
-            print_indent('Computing 2D entropy with radius: {:d}'.format(radius), l3)
+            logger.info(indent('Computing 2D entropy with radius: {:d}'.format(radius), l3))
         z_radius_range = [0]
     elif d>1: # 3D image
         if verbose:
-            print_indent('Computing 3D entropy with radius: {:d}'.format(radius), l3)
+            logger.info(indent('Computing 3D entropy with radius: {:d}'.format(radius), l3))
         z_radius_range = range(-radius, radius+1)
 
     # timing
@@ -81,14 +86,14 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
         extents = roi.getROIExtents()
         cstart, rstart, dstart = image_volume.frameofreference.getIndices(extents.start)
         cstop, rstop, dstop = image_volume.frameofreference.getIndices(extents.end())
-        print_indent('calculation subset volume x=({xstart:d}->{xstop:d}), '
+        logger.info(indent('calculation subset volume x=({xstart:d}->{xstop:d}), '
                                                'y=({ystart:d}->{ystop:d}), '
                                                'z=({zstart:d}->{zstop:d})'.format(zstart=dstart,
                                                                                   zstop=dstop,
                                                                                   ystart=rstart,
                                                                                   ystop=rstop,
                                                                                   xstart=cstart,
-                                                                                  xstop=cstop ), l4)
+                                                                                  xstop=cstop ), l4))
         # redefine H
         d_subset = dstop - dstart
         r_subset = rstop - rstart
@@ -123,22 +128,22 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
                 idx += 1
                 if (z<dstart or z>dstop or y<rstart or y>rstop or x<cstart or x>cstop):
                     # we shouldnt ever be here
-                    print('why are we here?!')
+                    logger.info('why are we here?!')
                     #fill 0 instead
                     set_val(H, z_idx, y_idx, x_idx, 0)
                 else:
                     subset_idx += 1
                     if ( verbose and (subset_idx % fivepercent == 0 or subset_idx == subset_total_voxels-1)):
-                        print_indent('{p:0.2%} - voxel: {i:d} of {tot:d} (of total: {abstot:d})'.format(
+                        logger.info(indent('{p:0.2%} - voxel: {i:d} of {tot:d} (of total: {abstot:d})'.format(
                             p=subset_idx/subset_total_voxels,
                             i=subset_idx,
                             tot=subset_total_voxels,
-                            abstot=total_voxels), l4)
+                            abstot=total_voxels), l4))
                     val_counts = {}
                     for k_z in z_radius_range:
                         for k_x in range(-radius, radius+1):
                             for k_y in range(-radius, radius+1):
-                                #print('k_z:{z:d}, k_y:{y:d}, k_x:{x:d}'.format(z=k_z,y=k_y,x=k_x))
+                                #logger.info('k_z:{z:d}, k_y:{y:d}, k_x:{x:d}'.format(z=k_z,y=k_y,x=k_x))
                                 # Calculate probabilities
                                 val = get_val(image_volume, z+k_z, y+k_y, x+k_x)
                                 if val in val_counts:
@@ -155,9 +160,9 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
                     h = -np.sum(val_probs*np.log(val_probs)) #/ np.log(65536)
                     set_val(H, z_idx, y_idx, x_idx, h)
                     if (False and verbose and (subset_idx % fivepercent == 0 or subset_idx == subset_total_voxels-1)):
-                        print('total counts: ' + str(total_counts))
-                        print('val_probs = ' + str(val_probs))
-                        print('entropy at ({x:d}, {y:d}, {z:d})= {e:f}'.format(
+                        logger.info('total counts: ' + str(total_counts))
+                        logger.info('val_probs = ' + str(val_probs))
+                        logger.info('entropy at ({x:d}, {y:d}, {z:d})= {e:f}'.format(
                             x=z*y*x + y*x + x,
                             y=z*y*x + y,
                             z=z*y*x,
@@ -169,7 +174,7 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
 
     end_entropy_calc = time.time()
     if verbose:
-        print_timer('entropy calculation time:', end_entropy_calc-start_entropy_calc, l3)
+        logger.info(timer('entropy calculation time:', end_entropy_calc-start_entropy_calc, l3))
     return H
 
 
@@ -244,8 +249,8 @@ def image_entropy_gpu(image_vect, radius=2):
     # get result from device
     cuda.memcpy_dtoh(result, image_gpu)
 
-    print(type(result))
-    print(result.shape)
-    print('GPU done')
+    logger.info(type(result))
+    logger.info(result.shape)
+    logger.info('GPU done')
     return result.reshape(r,c)
 
