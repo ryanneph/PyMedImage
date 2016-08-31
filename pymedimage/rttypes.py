@@ -500,7 +500,7 @@ class BaseVolume:
         # RESCALE
         if (rescale is True):
             if (self.rescaleparams is not None):
-                thisslice = self.rescaleArray(thisslice, rescale)
+                thisslice = self.rescaledArray(thisslice, rescale)
             else:
                 print('No RescaleParams assigned to self.rescaleparams')
                 raise Exception
@@ -511,7 +511,7 @@ class BaseVolume:
 
         return thisslice
 
-    def rescaleArray(self, array, rescaleparams):
+    def rescaledArray(self, array, rescaleparams):
         factor = float(rescaleparams.factor)
         offset = float(rescaleparams.offset)
         return np.add(np.multiply(array, factor), offset)
