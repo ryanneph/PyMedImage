@@ -30,6 +30,9 @@ def writeFigureToFile(fig, path, removeaxes=True, overwrite=False):
         saved = False
         exists = os.path.exists(path)
         if (overwrite or not exists):
+            if (not os.path.isdir(os.path.dirname(path))):
+                # path dir doesnt exist, create it
+                os.makedirs(os.path.dirname(path))
             fig.savefig(path, bbox_inches='tight')
             saved = True
 
