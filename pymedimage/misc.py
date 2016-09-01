@@ -51,5 +51,6 @@ def headerBlock(title, sep='-'):
 
 def indent(message, indent=0):
     indent_string = __get_indent_string(indent)
+    message = str(message)
     message = message.replace('\n', '\n' + indent_string)
     return '{indent_string:s}{message:s}'.format(indent_string=indent_string, message=message)

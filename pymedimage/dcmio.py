@@ -31,12 +31,12 @@ def read_dicom(path):
     return ds
 
 
-def read_dicom_dir(path, recursive=False, verbose=0):
+def read_dicom_dir(path, recursive=False, verbosity=0):
     """read all dicom files in directory and return a list of the dataset objects.
 
     Keyword arguments:
     recursive -- should we walk into subdirs?
-    verbose -- 1: low, 2: high, 3: full
+    verbosity -- 1: low, 2: high, 3: full
     """
     ds_list = []
     dicom_paths = []
@@ -63,15 +63,15 @@ def read_dicom_dir(path, recursive=False, verbose=0):
                 del dirs[:]
 
         # Now read the dicom files that were located within path
-        if verbose == 1:
+        if verbosity == 0:
             #low verbosity
-            logger.info(indent(dicom_paths[:5],l2_indent))
-        elif verbose == 2:
+            logger.debug(indent(dicom_paths[:5],l2_indent))
+        elif verbosity == 1:
             #high verbosity
-            logger.info(indent(dicom_paths[:20],l2_indent))
-        elif verbose > 2:
+            logger.debug(indent(dicom_paths[:20],l2_indent))
+        elif verbosity > 2:
             #full verbosity
-            logger.info(indent(dicom_paths,l2_indent))
+            logger.debug(indent(dicom_paths,l2_indent))
 
         if (len(dicom_paths)>0):
             for file in dicom_paths:

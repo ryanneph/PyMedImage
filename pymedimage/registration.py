@@ -20,19 +20,19 @@ def register_MultiModality(ref, volume_list):
     """
     ### check for valid inputs
     if (not isinstance(ref, MaskableVolume)):
-        logger.info('ref of type: {:s} is an invalid type. Must be a MaskableVolume or a subtype'.format(type(ref)))
+        logger.exception('ref of type: {:s} is an invalid type. Must be a MaskableVolume or a subtype'.format(type(ref)))
         raise TypeError
     if (isinstance(volume_list, list)):
         # check each element in volume_list
         for i, check_volume in enumerate(volume_list):
             if (not isinstance(check_volume, MaskableVolume)):
-                print('volume[{idx:d}] of type: {type:s} is an invalid type. Must be a MaskableVolume or a ' \
+                logger.exception('volume[{idx:d}] of type: {type:s} is an invalid type. Must be a MaskableVolume or a ' \
                         'subtype'.format(idx=i, type=type(ref)))
                 raise TypeError
     else:
         # volume_list was specified as a single volume, not a list holding a single volume
         if (not isinstance(volume_list, MaskableVolume)):
-            logger.info('Volume of type: {:s} is an invalid type. Must be a MaskableVolume or a subtype'.format(type(volume_list)))
+            logger.exception('Volume of type: {:s} is an invalid type. Must be a MaskableVolume or a subtype'.format(type(volume_list)))
             raise TypeError
 
     ### extract image volumes and convert to an ITK friendly type

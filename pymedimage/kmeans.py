@@ -96,7 +96,7 @@ def cluster(input, n_clusters=10, eps=1e-4):
         logger.info(indent(str(type(input)) + str(type(np.ndarray)), g_indents[1]))
         return None
     if (n_clusters<=1):
-        logger.info(indent('k must be >1', g_indents[1]))
+        logger.exception(indent('k must be >1', g_indents[1]))
         raise ValueError
 
     # Preprocessing - normalization

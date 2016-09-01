@@ -64,7 +64,7 @@ def loadImages(images_path, modalities):
                 logger.info('')
             return volumes
 
-def loadROIs(rtstruct_path, verbose=False):
+def loadROIs(rtstruct_path):
     """loads an rtstruct specified by path and returns a dict of ROI objects
 
     Args:
@@ -80,7 +80,7 @@ def loadROIs(rtstruct_path, verbose=False):
     logger.info(indent('Importing ROIs', l1_indent))
 
     # search recursively for a valid rtstruct file
-    ds_list = dcmio.read_dicom_dir(rtstruct_path, recursive=True, verbose=verbose)
+    ds_list = dcmio.read_dicom_dir(rtstruct_path, recursive=True)
     if (ds_list is None or len(ds_list) == 0):
         logger.info('no rtstruct datasets found at "{:s}"'.format(rtstruct_path))
         raise Exception
@@ -93,8 +93,7 @@ def loadROIs(rtstruct_path, verbose=False):
         StructureSetROI_list = ds.StructureSetROISequence
         nContours = len(StructureSetROI_list)
         if (nContours <= 0):
-            if (verbose):
-                logger.info(indent('no contours were found', l2_indent))
+            logger.debug(indent('no contours were found', l2_indent))
             return None
 
         # Add structuresetROI to dict
@@ -112,13 +111,11 @@ def loadROIs(rtstruct_path, verbose=False):
         for ROINumber, structuresetroi in StructureSetROI_dict.items():
             roi_dict[structuresetroi.ROIName] = (ROI(frameofreference=None,
                                                      roicontour=ROIContour_dict[ROINumber],
-                                                     structuresetroi=structuresetroi,
-                                                     verbose=verbose))
+                                                     structuresetroi=structuresetroi))
         # prune empty ROIs from dict
         for roiname, roi in dict(roi_dict).items():
             if (roi.coordslices is None or len(roi.coordslices) <= 0):
-                if (verbose):
-                    logger.info(indent('pruning empty ROI: {:s} from loaded ROIs'.format(roiname), l2_indent))
+                logger.debug(indent('pruning empty ROI: {:s} from loaded ROIs'.format(roiname), l2_indent))
                 del roi_dict[roiname]
 
         logger.info(indent('loaded {:d} ROIs succesfully'.format(len(roi_dict)), l2_indent))
@@ -128,7 +125,7 @@ def loadROIs(rtstruct_path, verbose=False):
         return None
 
 def loadEntropy(entropy_pickle_path, image_volumes, roi=None, radius=4,
-                savePickle=True, recalculate=False, verbose=False):
+                savePickle=True, recalculate=False):
     """Checks if entropy vector has already been pickled at path specified and
     loads the files if so, or computes entropy for each modality and pickles for later access.
 
@@ -207,7 +204,7 @@ def loadEntropy(entropy_pickle_path, image_volumes, roi=None, radius=4,
 
                 logger.info(indent('Computing entropy now...'.format(mod=mod), l2_indent))
                 entropy_volumes[mod] = features.image_entropy(image_volumes[mod], roi=roi,
-                                                              radius=radius, verbose=verbose)
+                                                              radius=radius)
                 if entropy_volumes[mod] is None:
                     logger.info(indent('Failed to compute entropy for {mod:s} images.'.format(
                         mod=mod.upper()), l2_indent))

@@ -42,8 +42,8 @@ def writeFigureToFile(fig, path, removeaxes=True, overwrite=False):
             saved = True
 
     except Exception as details:
-        logger.info('there was an error in saving the figure to: {:s}'.format(path))
-        logger.info(details)
+        logger.exception('there was an error in saving the figure to: {:s}'.format(path))
+        logger.exception(details)
     else:
         if (saved):
             if (overwrite and exists):

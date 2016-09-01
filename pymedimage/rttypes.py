@@ -86,7 +86,7 @@ class FrameOfReference:
 class ROI:
     """Defines a labeled RTStruct ROI for use in masking and visualization of Radiotherapy contours
     """
-    def __init__(self, frameofreference, roicontour, structuresetroi, verbose=False):
+    def __init__(self, frameofreference, roicontour, structuresetroi):
         """takes FrameOfReference object and roicontour/structuresetroi dicom dataset objects and stores
         sorted contour data
 
@@ -106,13 +106,11 @@ class ROI:
         # Populate list of coordslices, each containing a list of ordered coordinate points
         contoursequence = roicontour.ContourSequence
         if (len(contoursequence) <= 0):
-            if (verbose):
-                logger.info('no coordinates found in roi: {:s}'.format(self.roiname))
+            logger.debug('no coordinates found in roi: {:s}'.format(self.roiname))
             self.coordslices = None
         else:
             self.coordslices = []
-            if (verbose):
-                logger.info('loading roi: {:s} with {:d} slices'.format(self.roiname, len(roicontour.ContourSequence)))
+            logger.debug('loading roi: {:s} with {:d} slices'.format(self.roiname, len(roicontour.ContourSequence)))
             for coordslice in roicontour.ContourSequence:
                 points_list = []
                 for x, y, z in misc.grouper(3, coordslice.ContourData):
@@ -126,10 +124,10 @@ class ROI:
             if (frameofreference is not None):
                 self.frameofreference = frameofreference
             else:
-                self.frameofreference = self.getROIExtents(verbose)
+                self.frameofreference = self.getROIExtents()
 
 
-    def makeDenseMaskSlice(self, position, frameofreference=None, verbose=False):
+    def makeDenseMaskSlice(self, position, frameofreference=None):
         """Takes a FrameOfReference and constructs a dense binary mask for the ROI (1 inside ROI, 0 outside)
         as a numpy 2dArray
 
@@ -145,7 +143,7 @@ class ROI:
             if (self.frameofreference is not None):
                 frameofreference = self.frameofreference
             else:
-                logger.info('no frame of reference provided')
+                logger.exception('no frame of reference provided')
                 raise Exception
         xstart, ystart, zstart = frameofreference.start
         xspace, yspace, zspace = frameofreference.spacing
@@ -159,26 +157,22 @@ class ROI:
             # for each list of coordinate tuples - check the slice for distance from position
             error = abs(position - slice[0][2])
             if error < minerror:
-                if (verbose):
-                    if minerror != 5000:
-                        logger.info(position, slice[0][2])
-                        logger.info('improved with error {:f}'.format(error))
+                if minerror != 5000:
+                    logger.debug('position:{:0.3f} | slicepos:{:0.3f}'.format(position, slice[0][2]))
+                    logger.debug('improved with error {:f}'.format(error))
                 minerror = error
             if (error <= minerror):
                 coordslice = slice
-                if (verbose):
-                    logger.info('updating slice')
+                logger.debug('updating slice')
             else:
                 # we've already passed the nearest slice, break
                 break
 
         # check if our result is actually valid or we just hit the end of the array
         if minerror >= tolerance:
-            if (verbose):
-                logger.info('No slice found within {:f} mm of position {:f}'.format(tolerance, position))
+            logger.debug('No slice found within {:f} mm of position {:f}'.format(tolerance, position))
             return np.ones((rows, cols))
-        if (verbose):
-            logger.info('slice found at {:f} for position query at {:f}'.format(coordslice[0][2], position))
+        logger.debug('slice found at {:f} for position query at {:f}'.format(coordslice[0][2], position))
 
         # get coordinate values
         index_coords = []
@@ -197,7 +191,7 @@ class ROI:
         # convert from PIL image to np.ndarray and threshold to binary
         return np.array(im.getdata()).reshape((rows, cols))
 
-    def makeDenseMask(self, frameofreference=None, verbose=False):
+    def makeDenseMask(self, frameofreference=None):
         """Takes a FrameOfReference and constructs a dense binary mask for the ROI (1 inside ROI, 0 outside)
         as a BaseVolume
 
@@ -212,15 +206,14 @@ class ROI:
             if (self.frameofreference is not None):
                 frameofreference = self.frameofreference
             else:
-                logger.info('no frame of reference provided')
+                logger.exception('no frame of reference provided')
                 raise Exception
 
         # check cache for similarity between previously and currently supplied frameofreference objects
         if (self.__cache_densemask is not None
                 and frameofreference == self.__cache_densemask.frameofreference):
             # cached mask frameofreference is similar to current, return cached densemask volume
-            if (verbose):
-                logger.info('using cached dense mask volume')
+            logger.debug('using cached dense mask volume')
             return self.__cache_densemask
         else:
             xstart, ystart, zstart = frameofreference.start
@@ -229,13 +222,12 @@ class ROI:
 
             # generate binary mask for each slice in frameofreference
             maskslicearray_list = []
-            if (verbose):
-                print('making dense mask volume from z coordinates: {:f} to {:f}'.format(
-                    zstart, (zspace * (depth+1) + zstart)))
+            logger.debug('making dense mask volume from z coordinates: {:f} to {:f}'.format(
+                         zstart, (zspace * (depth+1) + zstart)))
             for i in range(depth):
                 position = zstart + i * zspace
                 # get a slice at every position within the current frameofreference
-                densemaskslice = self.makeDenseMaskSlice(position, frameofreference, verbose=verbose)
+                densemaskslice = self.makeDenseMaskSlice(position, frameofreference)
                 maskslicearray_list.append(densemaskslice.reshape((1, *densemaskslice.shape)))
 
             # construct BaseVolume from dense slice arrays
@@ -243,7 +235,7 @@ class ROI:
             self.__cache_densemask = densemask
             return densemask
 
-    def getROIExtents(self, verbose=False):
+    def getROIExtents(self):
         """Creates a tightly bound frame of reference around the ROI which allows visualization in a cropped
         frame
         """
@@ -285,11 +277,10 @@ class ROI:
                 int((global_limits['ymax'] - global_limits['ymin']) / spacing[1]),
                 int((global_limits['zmax'] - global_limits['zmin']) / spacing[2]) )
 
-        if (verbose):
-            print('ROIExtents:\n'
-                  '    start:   {:s}\n'
-                  '    spacing: {:s}\n'
-                  '    size:    {:s}'.format(str(start), str(spacing), str(size)))
+        logger.debug('ROIExtents:\n'
+                     '    start:   {:s}\n'
+                     '    spacing: {:s}\n'
+                     '    size:    {:s}'.format(str(start), str(spacing), str(size)))
         frameofreference = FrameOfReference(start, spacing, size, UID=None)
         return frameofreference
 
@@ -338,7 +329,7 @@ class BaseVolume:
             slices
         """
         if (dataset_list is None):
-            logger.info('no valid dataset_list provided')
+            logger.exception('no valid dataset_list provided')
             raise ValueError
 
         # check that all elements are valid slices, if not remove and continue
@@ -411,7 +402,7 @@ class BaseVolume:
             pickle.dump(basevolumepickle, p)
 
     # PUBLIC METHODS
-    def conformTo(self, frameofreference, verbose=False):
+    def conformTo(self, frameofreference):
         """Resamples the current BaseVolume to the supplied FrameOfReference
 
         Args:
@@ -422,40 +413,38 @@ class BaseVolume:
         """
         # conform volume to alternate FrameOfReference
         if (frameofreference is None):
-            logger.info('no FrameOfReference provided')
+            logger.exception('no FrameOfReference provided')
             raise ValueError
         elif (FrameOfReference.__name__ not in str(type(frameofreference))):  # This is an ugly way of type-checking but cant get isinstance to see both as the same
-            print('supplied frameofreference of type: "{:s}" must be of the type: "FrameOfReference"'.format(
-                str(type(frameofreference))))
+            logger.exception(('supplied frameofreference of type: "{:s}" must be of the type: "FrameOfReference"'.format(
+                str(type(frameofreference)))))
             raise TypeError
 
         # crop to active volume of requested FrameOfReference in frameofreference
         xstart_idx, ystart_idx, zstart_idx = self.frameofreference.getIndices(frameofreference.start)
         xend_idx, yend_idx, zend_idx = self.frameofreference.getIndices(frameofreference.end())
         cropped = self.array[zstart_idx:zend_idx, ystart_idx:yend_idx, xstart_idx:xend_idx]
-        if (verbose):
-            """
-            print('original FOR= start:{:s}, spacing:{:s}, size:{:s}'.format(
-                    str(self.frameofreference.start),
-                    str(self.frameofreference.spacing),
-                    str(self.frameofreference.size)))
-            print('new FOR= start:{:s}, spacing:{:s}, size:{:s}'.format(
-                    str(frameofreference.start),
-                    str(frameofreference.spacing),
-                    str(frameofreference.size)))
-            """
-            logger.info('uncropped shape (z,y,x): {:s}'.format(str(self.array.shape)))
-            logger.info('cropped shape(z,y,x): {:s}'.format(str(cropped.shape)))
-            logger.info('frameofreference shape (z,y,x): ({:d}, {:d}, {:d})'.format(frameofreference.size[2],
-                                                               frameofreference.size[1],
-                                                               frameofreference.size[0]))
+        """
+        print('original FOR= start:{:s}, spacing:{:s}, size:{:s}'.format(
+                str(self.frameofreference.start),
+                str(self.frameofreference.spacing),
+                str(self.frameofreference.size)))
+        print('new FOR= start:{:s}, spacing:{:s}, size:{:s}'.format(
+                str(frameofreference.start),
+                str(frameofreference.spacing),
+                str(frameofreference.size)))
+        """
+        logger.debug('uncropped shape (z,y,x): {:s}'.format(str(self.array.shape)))
+        logger.debug('cropped shape(z,y,x): {:s}'.format(str(cropped.shape)))
+        logger.debug('frameofreference shape (z,y,x): ({:d}, {:d}, {:d})'.format(frameofreference.size[2],
+                                                           frameofreference.size[1],
+                                                           frameofreference.size[0]))
 
         zoomfactors = []
         for i in range(3):
             zoomfactors.insert(i, frameofreference.size[2-i] / cropped.shape[i])
         zoomfactors = tuple(zoomfactors)
-        if (verbose):
-            logger.info('zoom factors (z, y, x): ({:0.3f}, {:0.3f}, {:0.3f})'.format(*zoomfactors))
+        logger.debug('zoom factors (z, y, x): ({:0.3f}, {:0.3f}, {:0.3f})'.format(*zoomfactors))
         resampled_array = interpolation.zoom(cropped, zoomfactors, order=3, mode='constant', cval=0)
 
         # reconstruct volume from resampled array
@@ -483,21 +472,21 @@ class BaseVolume:
         # perform index bounding
         if (axis==0):
             if (idx < 0 or idx >= depth):
-                logger.info('index out of bounds. must be between 0 -> {:d}'.format(depth))
+                logger.exception('index out of bounds. must be between 0 -> {:d}'.format(depth))
                 raise IndexError
             thisslice = self.array[idx, :, :]
         elif (axis==1):
             if (idx < 0 or idx >= rows):
-                logger.info('index out of bounds. must be between 0 -> {:d}'.format(rows))
+                logger.exception('index out of bounds. must be between 0 -> {:d}'.format(rows))
                 raise IndexError
             thisslice = self.array[:, idx, :]
         elif (axis==2):
             if (idx < 0 or idx >= cols):
-                logger.info('index out of bounds. must be between 0 -> {:d}'.format(cols))
+                logger.exception('index out of bounds. must be between 0 -> {:d}'.format(cols))
                 raise IndexError
             thisslice = self.array[:, :, idx]
         else:
-            logger.info('invalid axis supplied. must be between 0 -> 2')
+            logger.exception('invalid axis supplied. must be between 0 -> 2')
             raise ValueError
 
         # RESCALE
@@ -505,7 +494,7 @@ class BaseVolume:
             if (self.rescaleparams is not None):
                 thisslice = self.rescaledArray(thisslice, rescale)
             else:
-                logger.info('No RescaleParams assigned to self.rescaleparams')
+                logger.exception('No RescaleParams assigned to self.rescaleparams')
                 raise Exception
 
         # RESHAPE
@@ -533,13 +522,13 @@ class BaseVolume:
 
         # perform index bounding
         if (x < 0 or x >= rows):
-            logger.info('x index out of bounds. must be between 0 -> {:d}'.format(cols-1))
+            logger.exception('x index out of bounds. must be between 0 -> {:d}'.format(cols-1))
             raise IndexError
         if (y < 0 or y >= cols):
-            logger.info('y index out of bounds. must be between 0 -> {:d}'.format(rows-1))
+            logger.exception('y index out of bounds. must be between 0 -> {:d}'.format(rows-1))
             raise IndexError
         if (z < 0 or z >= depth):
-            logger.info('z index out of bounds. must be between 0 -> {:d}'.format(depth-1))
+            logger.exception('z index out of bounds. must be between 0 -> {:d}'.format(depth-1))
             raise IndexError
 
         return self.array[z, y, x]
@@ -553,13 +542,13 @@ class BaseVolume:
 
         # perform index bounding
         if (x < 0 or x >= cols):
-            logger.info('x index out of bounds. must be between 0 -> {:d}'.format(cols-1))
+            logger.exception('x index out of bounds. must be between 0 -> {:d}'.format(cols-1))
             raise IndexError
         if (y < 0 or y >= rows):
-            logger.info('y index out of bounds. must be between 0 -> {:d}'.format(rows-1))
+            logger.exception('y index out of bounds. must be between 0 -> {:d}'.format(rows-1))
             raise IndexError
         if (z < 0 or z >= depth):
-            logger.info('z index out of bounds. must be between 0 -> {:d}'.format(depth-1))
+            logger.exception('z index out of bounds. must be between 0 -> {:d}'.format(depth-1))
             raise IndexError
 
         # reassign value
@@ -574,7 +563,7 @@ class MaskableVolume(BaseVolume):
         # call to base class initializer
         super().__init__()
 
-    def conformTo(self, frameofreference, verbose=False):
+    def conformTo(self, frameofreference):
         """Resamples the current MaskableVolume to the supplied FrameOfReference
 
         Args:
@@ -583,11 +572,11 @@ class MaskableVolume(BaseVolume):
         Returns:
             MaskableVolume
         """
-        base = super().conformTo(frameofreference, verbose)
+        base = super().conformTo(frameofreference)
         maskable = MaskableVolume().fromArray(base.array, base.frameofreference)
         return maskable
 
-    def getSlice(self, idx, axis=0, rescale=False, flatten=False, roi=None, verbose=False):
+    def getSlice(self, idx, axis=0, rescale=False, flatten=False, roi=None):
         """Extracts 2dArray of idx along the axis.
         Args:
             idx     -- idx identifying the slice along axis
@@ -609,7 +598,7 @@ class MaskableVolume(BaseVolume):
 
         # get equivalent slice from densemaskarray
         if (roi is not None):
-            maskslicearray = roi.makeDenseMask(self.frameofreference, verbose=verbose).getSlice(idx, axis, rescale, flatten)
+            maskslicearray = roi.makeDenseMask(self.frameofreference).getSlice(idx, axis, rescale, flatten)
             # apply mask
             slicearray = np.multiply(slicearray, maskslicearray)
 

@@ -21,7 +21,7 @@ logger.addHandler(logging.NullHandler())
 l3 = g_indents[3]
 l4 = g_indents[4]
 
-def image_entropy(image_volume, radius=2, roi=None, verbose=False):
+def image_entropy(image_volume, radius=2, roi=None):
     """compute the pixel-wise entropy of an image over a region defined by neighborhood
 
     Args:
@@ -64,12 +64,10 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
 
     # z_radius_range controls 2d neighborhood vs 3d neighborhood for 2d vs 3d images
     if d == 1: #2D image
-        if verbose:
-            logger.info(indent('Computing 2D entropy with radius: {:d}'.format(radius), l3))
+        logger.debug(indent('Computing 2D entropy with radius: {:d}'.format(radius), l3))
         z_radius_range = [0]
     elif d>1: # 3D image
-        if verbose:
-            logger.info(indent('Computing 3D entropy with radius: {:d}'.format(radius), l3))
+        logger.debug(indent('Computing 3D entropy with radius: {:d}'.format(radius), l3))
         z_radius_range = range(-radius, radius+1)
 
     # timing
@@ -133,8 +131,8 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
                     set_val(H, z_idx, y_idx, x_idx, 0)
                 else:
                     subset_idx += 1
-                    if ( verbose and (subset_idx % fivepercent == 0 or subset_idx == subset_total_voxels-1)):
-                        logger.info(indent('{p:0.2%} - voxel: {i:d} of {tot:d} (of total: {abstot:d})'.format(
+                    if ((subset_idx % fivepercent == 0 or subset_idx == subset_total_voxels-1)):
+                        logger.debug(indent('{p:0.2%} - voxel: {i:d} of {tot:d} (of total: {abstot:d})'.format(
                             p=subset_idx/subset_total_voxels,
                             i=subset_idx,
                             tot=subset_total_voxels,
@@ -159,10 +157,10 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
                     # calculate local entropy
                     h = -np.sum(val_probs*np.log(val_probs)) #/ np.log(65536)
                     set_val(H, z_idx, y_idx, x_idx, h)
-                    if (False and verbose and (subset_idx % fivepercent == 0 or subset_idx == subset_total_voxels-1)):
-                        logger.info('total counts: ' + str(total_counts))
-                        logger.info('val_probs = ' + str(val_probs))
-                        logger.info('entropy at ({x:d}, {y:d}, {z:d})= {e:f}'.format(
+                    if (False and (subset_idx % fivepercent == 0 or subset_idx == subset_total_voxels-1)):
+                        logger.debug('total counts: ' + str(total_counts))
+                        logger.debug('val_probs = ' + str(val_probs))
+                        logger.debug('entropy at ({x:d}, {y:d}, {z:d})= {e:f}'.format(
                             x=z*y*x + y*x + x,
                             y=z*y*x + y,
                             z=z*y*x,
@@ -173,8 +171,7 @@ def image_entropy(image_volume, radius=2, roi=None, verbose=False):
 
 
     end_entropy_calc = time.time()
-    if verbose:
-        logger.info(timer('entropy calculation time:', end_entropy_calc-start_entropy_calc, l3))
+    logger.debug(timer('entropy calculation time:', end_entropy_calc-start_entropy_calc, l3))
     return H
 
 
