@@ -7,7 +7,7 @@ import os
 import logging
 from utils.rttypes import MaskableVolume, ROI
 from utils.misc import indent, g_indents
-from utils import features, dcmio
+from utils import features, dcmio, kmeans
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -124,8 +124,7 @@ def loadROIs(rtstruct_path):
         logger.info(indent('no dataset was found', l2_indent))
         return None
 
-def loadEntropy(entropy_pickle_path, image_volumes, roi=None, radius=4,
-                savePickle=True, recalculate=False):
+def loadEntropy(entropy_pickle_path, image_volumes, radius, roi=None, savepickle=True, recalculate=False):
     """Checks if entropy vector has already been pickled at path specified and
     loads the files if so, or computes entropy for each modality and pickles for later access.
 
@@ -232,3 +231,127 @@ def loadEntropy(entropy_pickle_path, image_volumes, roi=None, radius=4,
 
         # return dict of modality specific entropy imvectors with keys defined by keys for image_volumes arg.
         return entropy_volumes
+
+def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, roi=None, savepickle=True,
+        recalculate=False):
+    """Creates feature matrix and calculates clusters then stores the result in new pickle at path specified
+    for later recall during hierarchical clustering.
+
+    Args:
+        clusters_pickle_path    -- path to search for pickle file and to store new result to
+        feature_volumes_list    -- list of BaseVolumes to be used as feature vectors in clustering
+        nclusters               -- desired number of clusters computed by kmeans
+    Optional Args:
+        savepickle              -- should we save the result to pickle?
+        recalculate             -- should we recalculate anyway?
+    """
+    # check if path specified exists
+    if (not os.path.exists(clusters_pickle_path)):
+        logger.info('Couldn\'t find specified path, nothing was loaded.')
+        return None
+    else:
+        # extract modalities
+        if (feature_volumes_list is None or len(feature_volumes_list)==0):
+            logger.info('No image data was provided. Skipping')
+            return None
+        modalities = set([vol.modality.lower()
+                          for vol in feature_volumes_list
+                          if (vol.modality is not None)])
+        # turn modalities into string
+        mod_string = '_'.join(modalities)
+
+        # get list of files in immediate path (not recursive)
+        files = [
+            f
+            for f in os.listdir(clusters_pickle_path)
+            if os.path.isfile(os.path.join(clusters_pickle_path, f))
+            and ('clusters' in f.lower())
+            and ('.pickle' == os.path.splitext(f)[1])
+        ]
+
+        # find cluster pickle that matches requested modalities, entropy radius, nclusters, and roi
+        # match against radius, nclusters, roi
+        matches1 = [f for f in files
+                    if ('rad{:d}'.format(radius) in f.lower()
+                        and 'ncl{:d}'.format(nclusters) in f.lower())]
+
+        # further match against all modalities
+        modmatches = list(matches1)
+        for mod in modalities:
+            modmatches = [f for f in list(modmatches)
+                          if (mod.lower() in f.lower())]
+
+        # even further match against roi name if specified
+        if (roi is not None):
+            match = next((f for f in modmatches
+                          if (roi.roiname.lower() in f.lower())), None)
+        else:
+            match = next((f for f in modmatches), None)
+
+        # print results to debug
+        if (match is not None):
+            logger.debug('match found at path: {:s}'.format(os.path.join(clusters_pickle_path, match)))
+        else:
+            logger.debug('no match found')
+
+
+        # proceed with loading or recalculating clusters
+        if (not recalculate and match is not None):
+            # found pickled clusters, load it and add to dict - no need to calculate
+            logger.info('Pickled clusters volume found. Loading from path: {:s}'.format(
+                               os.path.join(clusters_pickle_path, match)))
+            try:
+                path = os.path.join(clusters_pickle_path, match)
+                clusters = MaskableVolume().fromPickle(path)
+            except:
+                logger.info('there was a problem loading the file: {path:s}'.format(path=path))
+                clusters = None
+            else:
+                logger.info('Pickled clusters volume loaded successfully.')
+        else:
+            # Calculate this time
+            if (match is not None):
+                # force calculation
+                logger.info('Recalculating clusters as requested')
+            else:
+                # if no file is matched, calculate instead
+                logger.info('No pickled clusters volume found')
+
+            # get feature matrix
+            feature_matrix, clusters_frameofreference = kmeans.create_feature_matrix(feature_volumes_list, roi=roi)
+
+            # calculate:
+            clustering_result = kmeans.cluster(feature_matrix, nclusters)
+
+            if clustering_result is None:
+                logger.info('Failed to compute clusters.')
+            else:
+                logger.info('Clusters computed successfully')
+
+                # create MaskableVolume from clustering_result
+                clusters = MaskableVolume().fromArray(clustering_result, clusters_frameofreference)
+
+                # pickle for later recall
+                if (roi is not None):
+                    # append ROIName to pickle path
+                    pickle_dump_path = os.path.join(clusters_pickle_path,
+                        'clusters_{mods:s}_roi_{roiname:s}_rad{rad:d}_ncl{ncl:d}.pickle'.format(
+                            mods=mod_string,
+                            roiname=roi.roiname,
+                            rad=radius,
+                            ncl=nclusters))
+                else:
+                    # dont append roiname to pickle path
+                    pickle_dump_path = os.path.join(clusters_pickle_path,
+                            'entropy_{mods:s}_rad{rad:d}_ncl{ncl:d}.pickle'.format(
+                                mods=mod_string, rad=radius, ncl=nclusters))
+                try:
+                    clusters.toPickle(pickle_dump_path)
+                except:
+                    logger.info('error pickling: {:s}'.format(pickle_dump_path))
+                else:
+                    logger.info('clusters pickled successfully to: {:s}'.format(pickle_dump_path))
+            logger.info('')
+
+        # return MaskableVolume containing cluster assignments
+        return clusters

@@ -9,7 +9,7 @@ from .misc import indent, g_indents
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-def create_feature_vector(features, roi=None):
+def create_feature_matrix(features, roi=None):
     """takes a list of feature BaseVolumes and combines them into a numpy ndarray of N rows and D features
 
     where N is the number of samples in each feature vector (voxels in the image) and D is the number of
@@ -78,33 +78,33 @@ def create_feature_vector(features, roi=None):
         return (feature_array, frameofreference)
 
 
-def cluster(input, n_clusters=10, eps=1e-4):
+def cluster(feature_matrix, nclusters=10, eps=1e-4):
     """take input feature array of N rows and D columns and perform standard kmeans clustering using \
             sklearn kmeans library
 
     Args:
-        input         --  numpy array of N rows and D columns where N is the number of voxels in the
+        feature_matrix         --  numpy array of N rows and D columns where N is the number of voxels in the
                             volume and D is the number of features.
-        n_clusters    --  number of clusters
+        nclusters    --  number of clusters
         eps           --  epsilon convergence criteria
     Returns:
-        imvector of cluster assignments from 0 to k-1 aligned to the BaseVolumes of input
+        imvector of cluster assignments from 0 to k-1 aligned to the BaseVolumes of feature_matrix
     """
     # check inputs
-    if not isinstance(input, np.ndarray):
+    if not isinstance(feature_matrix, np.ndarray):
         logger.info(indent('a proper numpy ndarray was not provided. skipping.', g_indents[1]))
-        logger.info(indent(str(type(input)) + str(type(np.ndarray)), g_indents[1]))
+        logger.info(indent(str(type(feature_matrix)) + str(type(np.ndarray)), g_indents[1]))
         return None
-    if (n_clusters<=1):
+    if (nclusters<=1):
         logger.exception(indent('k must be >1', g_indents[1]))
         raise ValueError
 
     # Preprocessing - normalization
     normalizer = StandardScaler()
-    normalized_input = normalizer.fit_transform(input)
+    normalized_feature_matrix = normalizer.fit_transform(feature_matrix)
 
     # create estimator obj
-    km = KMeans(n_clusters=n_clusters,
+    km = KMeans(n_clusters=nclusters,
                 max_iter=300,
                 n_init=10,
                 init='k-means++',
@@ -112,7 +112,7 @@ def cluster(input, n_clusters=10, eps=1e-4):
                 tol=eps,
                 n_jobs=-3
                 )
-    km.fit(normalized_input)
+    km.fit(normalized_feature_matrix)
     logger.info(indent('#iters: {:d}'.format(km.n_iter_), g_indents[1]))
-    logger.info(indent('score: {score:0.4f}'.format(score=km.score(normalized_input)), g_indents[1]))
-    return km.predict(normalized_input)
+    logger.info(indent('score: {score:0.4f}'.format(score=km.score(normalized_feature_matrix)), g_indents[1]))
+    return km.predict(normalized_feature_matrix)

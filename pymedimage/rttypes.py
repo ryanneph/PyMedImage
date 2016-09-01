@@ -304,7 +304,8 @@ class BaseVolume:
             array             -- numpy array
             frameofreference  -- FrameOfReference object
         """
-        self.array = array
+        # ensure array matches size in frameofreference
+        self.array = array.reshape(frameofreference.size[::-1])
         self.frameofreference = frameofreference
 
         return self
