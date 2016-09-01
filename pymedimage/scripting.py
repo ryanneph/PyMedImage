@@ -257,8 +257,19 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
         modalities = set([vol.modality.lower()
                           for vol in feature_volumes_list
                           if (vol.modality is not None)])
+        # reorder modalities for predictable naming
+        orderedmodalities = []
+        order_pref = ['ct', 'pet']
+        # add any extra modalities to the end
+        for mod in modalities:
+            if (mod not in order_pref):
+                order_pref.append(mod)
+        # get modalities in preferred order
+        for mod in order_pref:
+            if (mod in modalities):
+                orderedmodalities.append(mod)
         # turn modalities into string
-        mod_string = '_'.join(modalities)
+        mod_string = '_'.join(orderedmodalities)
 
         # get list of files in immediate path (not recursive)
         files = [
