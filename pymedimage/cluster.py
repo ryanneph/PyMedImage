@@ -1,4 +1,4 @@
-"""implementation of standard kmeans clustering"""
+"""implementation of clustering algorithms and helpers for working with rttypes"""
 import logging
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
@@ -78,7 +78,7 @@ def create_feature_matrix(features, roi=None):
         return (feature_array, frameofreference)
 
 
-def cluster(feature_matrix, nclusters=10, eps=1e-4):
+def cluster_kmeans(feature_matrix, nclusters=10, eps=1e-4):
     """take input feature array of N rows and D columns and perform standard kmeans clustering using \
             sklearn kmeans library
 

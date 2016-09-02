@@ -7,7 +7,7 @@ import os
 import logging
 from utils.rttypes import MaskableVolume, ROI
 from utils.misc import indent, g_indents
-from utils import features, dcmio, kmeans
+from utils import features, dcmio, cluster
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -329,10 +329,10 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
                 logger.info('No pickled clusters volume found')
 
             # get feature matrix
-            feature_matrix, clusters_frameofreference = kmeans.create_feature_matrix(feature_volumes_list, roi=roi)
+            feature_matrix, clusters_frameofreference = cluster.create_feature_matrix(feature_volumes_list, roi=roi)
 
             # calculate:
-            clustering_result = kmeans.cluster(feature_matrix, nclusters)
+            clustering_result = cluster.cluster_kmeans(feature_matrix, nclusters)
 
             if clustering_result is None:
                 logger.info('Failed to compute clusters.')
