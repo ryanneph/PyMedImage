@@ -6,7 +6,7 @@ A collection of functions/methods that carry us from one step to another in the 
 import os
 import logging
 from utils.rttypes import MaskableVolume, ROI
-from utils.misc import indent, g_indents
+from utils.misc import indent, g_indents, findFiles
 from utils import features, dcmio, cluster
 
 # initialize module logger
@@ -146,16 +146,7 @@ def loadEntropy(entropy_pickle_path, image_volumes, radius, roi=None, savepickle
         if (image_volumes is None or len(image_volumes)==0):
             logger.info('No image data was provided. Skipping')
             return None
-        modalities = image_volumes.keys()
-
-        # get list of files in immediate path (not recursive)
-        files = [
-            f
-            for f in os.listdir(entropy_pickle_path)
-            if os.path.isfile(os.path.join(entropy_pickle_path, f))
-            and ('entropy' in f.lower())
-            and ('.pickle' == os.path.splitext(f)[1])
-        ]
+        modalities = list(image_volumes.keys())
 
         # load first file that matches the search and move to next modality
         entropy_volumes = {}
@@ -165,18 +156,19 @@ def loadEntropy(entropy_pickle_path, image_volumes, radius, roi=None, savepickle
             logger.info(indent('Loading {mod:s} entropy:'.format(mod=mod.upper()), l1_indent))
             # initialize to None
             entropy_volumes[mod] = None
-            # find first pickle that matches modality string or compute entropy fresh for that modality
+
+            # get files that match settings
+            keywords = ['entropy',
+                        'rad{:d}'.format(radius)]
             if (roi is not None):
-                # match with modality and ROIName - gets first match and stops
-                match = next((f for f in files
-                              if (mod in f.lower()
-                                  and roi.roiname.lower() in f.lower()
-                                  and 'rad{:d}'.format(radius) in f.lower())), None)
+                keywords.append(roi.roiname)
+            keywords.append(mod)
+            matches = findFiles(entropy_pickle_path, type='.pickle', keywordlist=keywords)
+
+            if (matches is not None):
+                match = matches[0]
             else:
-                # match with modality - gets first match and stops
-                match = next((f for f in files
-                              if (mod in f.lower()
-                                  and 'rad{:d}'.format(radius) in f.lower()) ), None)
+                match = None
 
             if (not recalculate and match is not None):
                 # found pickled entropy vector, load it and add to dict - no need to calculate entropy
@@ -271,39 +263,18 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
         # turn modalities into string
         mod_string = '_'.join(orderedmodalities)
 
-        # get list of files in immediate path (not recursive)
-        files = [
-            f
-            for f in os.listdir(clusters_pickle_path)
-            if os.path.isfile(os.path.join(clusters_pickle_path, f))
-            and ('clusters' in f.lower())
-            and ('.pickle' == os.path.splitext(f)[1])
-        ]
-
-        # find cluster pickle that matches requested modalities, entropy radius, nclusters, and roi
-        # match against radius, nclusters, roi
-        matches1 = [f for f in files
-                    if ('rad{:d}'.format(radius) in f.lower()
-                        and 'ncl{:d}'.format(nclusters) in f.lower())]
-
-        # further match against all modalities
-        modmatches = list(matches1)
-        for mod in modalities:
-            modmatches = [f for f in list(modmatches)
-                          if (mod.lower() in f.lower())]
-
-        # even further match against roi name if specified
+        # get files that match settings
+        keywords = ['clusters',
+                    'rad{:d}'.format(radius),
+                    'ncl{:d}'.format(nclusters)]
         if (roi is not None):
-            match = next((f for f in modmatches
-                          if (roi.roiname.lower() in f.lower())), None)
+            keywords.append(roi.roiname)
+        keywords = keywords + list(modalities)
+        matches = findFiles(clusters_pickle_path, type='.pickle', keywordlist=keywords)
+        if (matches is not None):
+            match = matches[0]
         else:
-            match = next((f for f in modmatches), None)
-
-        # print results to debug
-        if (match is not None):
-            logger.debug('match found at path: {:s}'.format(os.path.join(clusters_pickle_path, match)))
-        else:
-            logger.debug('no match found')
+            match = None
 
 
         # proceed with loading or recalculating clusters

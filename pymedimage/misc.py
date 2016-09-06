@@ -3,6 +3,7 @@
 collection of miscellanious convenience functions
 """
 
+import os
 import time
 import logging
 
@@ -60,3 +61,57 @@ def indent(message, indent=0):
     message = str(message)
     message = message.replace('\n', '\n' + indent_string)
     return '{indent_string:s}{message:s}'.format(indent_string=indent_string, message=message)
+
+def findFiles(root, type=None, keywordlist=None, casesensitive=False, recursive=False):
+    """returns a list of full file paths beneath root if each path contains all of the strings in keywordlist
+    and is of the type (ext) specified
+
+    Args:
+        root          -- path within which to check files
+
+    Optional Args:
+        type          -- file extension to verify (with or without dot is okay)
+        keywordlist   -- list of words which must all be present as substrings in filename
+        casesensitive -- check character case?
+        recursive     -- walk into subdirectories
+    """
+    # get list of files in root (match extension if specified)
+    files = [
+        f
+        for f in os.listdir(root)
+        if os.path.isfile(os.path.join(root, f))
+        and (type.replace('.', '') == os.path.splitext(f)[1].replace('.', '') if type is not None else True)
+    ]
+
+    matches = []
+    if (files is not None and len(files) > 0):
+        # find files that contain all specified keywords
+        for f in files:
+            valid = True
+            for key in keywordlist:
+                if (casesensitive):
+                    if (key not in f):
+                        valid = False
+                        break
+                else:
+                    if (key.lower() not in f.lower()):
+                        valid = False
+                        break
+            if (valid):
+                matches.append(os.path.join(root, f))
+
+        # print results to debug
+        if (len(matches) == 1):
+            logger.debug('match found at path: {:s}'.format(os.path.join(root, matches[0])))
+        elif (len(matches) > 1):
+            logger.debug('matches found at paths:')
+            for m in matches:
+                logger.debug('  {:s}'.format(m))
+        else:
+            logger.debug('no matches found')
+            return None
+
+        return matches
+    else:
+        logger.debug('no files found')
+        return None
