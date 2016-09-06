@@ -4,6 +4,12 @@ collection of miscellanious convenience functions
 """
 
 import time
+import logging
+
+# initialize module logger
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+
 from itertools import zip_longest
 def grouper(n, iterable, fillvalue=None):
     """Unpacks iterables using groupings of n elements

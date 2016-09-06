@@ -1,4 +1,6 @@
-"""implementation of clustering algorithms and helpers for working with rttypes"""
+"""cluster.py
+
+implementation of clustering algorithms and helpers for working with rttypes"""
 import logging
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
