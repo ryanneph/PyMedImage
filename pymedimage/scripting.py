@@ -5,6 +5,7 @@ A collection of functions/methods that carry us from one step to another in the 
 
 import os
 import logging
+import pickle
 from utils.rttypes import MaskableVolume, ROI
 from utils.misc import indent, g_indents, findFiles
 from utils import features, dcmio, cluster
@@ -249,6 +250,10 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
         modalities = set([vol.modality.lower()
                           for vol in feature_volumes_list
                           if (vol.modality is not None)])
+        # replace pt with pet
+        if ('pt' in modalities):
+            modalities.remove('pt')
+            modalities.add('pet')
         # reorder modalities for predictable naming
         orderedmodalities = []
         order_pref = ['ct', 'pet']
@@ -300,7 +305,8 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
                 logger.info('No pickled clusters volume found')
 
             # get feature matrix
-            feature_matrix, clusters_frameofreference = cluster.create_feature_matrix(feature_volumes_list, roi=roi)
+            feature_matrix, clusters_frameofreference = cluster.create_feature_matrix(feature_volumes_list,
+                                                                                      roi=roi)
 
             # calculate:
             clustering_result = cluster.cluster_kmeans(feature_matrix, nclusters)
@@ -325,7 +331,7 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
                 else:
                     # dont append roiname to pickle path
                     pickle_dump_path = os.path.join(clusters_pickle_path,
-                            'entropy_{mods:s}_rad{rad:d}_ncl{ncl:d}.pickle'.format(
+                            'clusters_{mods:s}_rad{rad:d}_ncl{ncl:d}.pickle'.format(
                                 mods=mod_string, rad=radius, ncl=nclusters))
                 try:
                     clusters.toPickle(pickle_dump_path)
@@ -333,7 +339,19 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
                     logger.info('error pickling: {:s}'.format(pickle_dump_path))
                 else:
                     logger.info('clusters pickled successfully to: {:s}'.format(pickle_dump_path))
-            logger.info('')
+
+
+                # store feature matrix in pickle as numpy ndarray
+                featpickle_dump_path = pickle_dump_path.replace('clusters', 'features')
+                try:
+                    with open(featpickle_dump_path, mode='wb') as f:
+                        pickle.dump(feature_matrix, f)
+                except:
+                    logger.info('error pickling: {:s}'.format(featpickle_dump_path))
+                else:
+                    logger.info('features successfully pickled to: {:s}'.format(featpickle_dump_path))
+
+                logger.info('')
 
         # return MaskableVolume containing cluster assignments
         return clusters
