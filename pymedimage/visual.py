@@ -56,13 +56,29 @@ def tile(array_list, perrow, square=False, pad_width=5, pad_intensity=1000):
     visualization
 
     Args:
-        array_list  -- list of np.ndarrays to be tiled in row-major order
-        perrow      -- integer specifying number of images per row
+        array_list    -- list of np.ndarrays to be tiled in row-major order
+        perrow        -- integer specifying number of images per row
+
+    Optional Args:
+        square        -- Try to make length and width equal by tiling vertical columns side-by-side
+        pad_width     -- # columns between vertical tiling columns
+        pad_intensity -- # intensity value of padding cells
 
     Returns:
         numpy matrix/2dArray
     """
     # setup
+    if (not isinstance(array_list, list)):
+        logger.debug('converting array_list to list')
+        array_list_old = array_list
+        ndims = len(array_list_old.shape)
+        if (ndims == 3):
+            array_list = []
+            array_list_old_2dshape = (array_list_old.shape[1], array_list_old.shape[2])
+            for i in range(array_list_old.shape[0]):
+                array_list.append(array_list_old[i, :, :].reshape(array_list_old_2dshape))
+        elif (ndims == 2):
+            array_list = [array_list_old]
     nimages = len(array_list)
     expect_row_shape = (array_list[0].shape[0], perrow * array_list[0].shape[1])
 
