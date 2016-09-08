@@ -2,7 +2,7 @@
 
 implementation of clustering algorithms and helpers for working with rttypes"""
 import logging
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.preprocessing import StandardScaler
 import numpy as np
 from .misc import indent, g_indents
@@ -85,10 +85,12 @@ def cluster_kmeans(feature_matrix, nclusters=10, eps=1e-4):
             sklearn kmeans library
 
     Args:
-        feature_matrix         --  numpy array of N rows and D columns where N is the number of voxels in the
+        feature_matrix -- numpy array of N rows and D columns where N is the number of voxels in the
                             volume and D is the number of features.
-        nclusters    --  number of clusters
-        eps           --  epsilon convergence criteria
+
+    Optional Args:
+        nclusters      -- number of clusters
+        eps            -- epsilon convergence criteria
     Returns:
         imvector of cluster assignments from 0 to k-1 aligned to the BaseVolumes of feature_matrix
     """
@@ -118,3 +120,66 @@ def cluster_kmeans(feature_matrix, nclusters=10, eps=1e-4):
     logger.info(indent('#iters: {:d}'.format(km.n_iter_), g_indents[1]))
     logger.info(indent('score: {score:0.4f}'.format(score=km.score(normalized_feature_matrix)), g_indents[1]))
     return km.predict(normalized_feature_matrix)
+
+def cluster_hierarchical(feature_matrix, nclusters=3, affinity='euclidean', linkage='ward'):
+    """take input feature array of N rows and D columns and perform agglomerative hierarchical clustering \
+            using the standard sklearn agglomerative clustring library
+
+    Args:
+        feature_matrix -- numpy array of N rows and D columns where N is the number of voxels in the
+                            volume and D is the number of features.
+
+    Optional Args:
+        nclusters      -- number of clusters to find
+        affinity       -- metric used to compute linkage ['euclidean', 'l1', 'l2', 'manhattan']
+        linkage        -- criterion to use for cluster merging ['ward', 'complete', 'average']
+    """
+    # check inputs
+    if not isinstance(feature_matrix, np.ndarray):
+        logger.exception(indent('a proper numpy ndarray was not provided. {:s} != {:s}'.format(
+            str(type(feature_matrix)),
+            str(type(np.ndarray))
+        ), g_indents[1]))
+        raise TypeError
+
+    # sanitize string inputs
+    linkage = linkage.lower()
+    affinity = affinity.lower()
+
+    # Preprocessing - normalization
+    normalizer = StandardScaler()
+    normalized_feature_matrix = normalizer.fit_transform(feature_matrix)
+
+    # determine valid parameters
+    valid_linkage = ['ward', 'complete', 'maximum', 'average']
+    if (linkage not in valid_linkage):
+        logger.exception('linkage must be one of {:s}'.format(str(valid_linkage)))
+        raise ValueError(str)
+    if (linkage is 'maximum'):
+        linkage = 'complete'
+
+    valid_affinity = ['l1', 'l2', 'manhattan', 'cosine', 'euclidean']
+    if (affinity not in valid_affinity):
+        logger.exception('affinity must be one of {:s}'.format(str(valid_affinity)))
+        raise ValueError(str)
+
+    if (linkage is 'ward'):
+        # must use euclidean distance
+        affinity = 'euclidean'
+
+    conn_matrix = None
+
+    # create estimator obj
+    agg = AgglomerativeClustering(n_clusters=nclusters,
+                                  connectivity=conn_matrix,
+                                  affinity=affinity,
+                                  compute_full_tree=True,
+                                  linkage=linkage,
+                                  pooling_func=np.mean
+                                  )
+
+    # perform fit and estimation
+    prediction = agg.fit_predict(normalized_feature_matrix)
+    logger.info(indent('#leaves: {:d}'.format(agg.n_leaves_), g_indents[1]))
+    logger.info(indent('#components: {:d}'.format(agg.n_components_), g_indents[1]))
+    return prediction
