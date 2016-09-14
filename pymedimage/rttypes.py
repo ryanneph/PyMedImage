@@ -157,13 +157,13 @@ class ROI:
             # for each list of coordinate tuples - check the slice for distance from position
             error = abs(position - slice[0][2])
             if error < minerror:
-                if minerror != 5000:
-                    logger.debug('position:{:0.3f} | slicepos:{:0.3f}'.format(position, slice[0][2]))
-                    logger.debug('improved with error {:f}'.format(error))
+                # if minerror != 5000:
+                #     logger.debug('position:{:0.3f} | slicepos:{:0.3f}'.format(position, slice[0][2]))
+                #     logger.debug('improved with error {:f}'.format(error))
                 minerror = error
             if (error <= minerror):
                 coordslice = slice
-                logger.debug('updating slice')
+                # logger.debug('updating slice')
             else:
                 # we've already passed the nearest slice, break
                 break
@@ -213,7 +213,7 @@ class ROI:
         if (self.__cache_densemask is not None
                 and frameofreference == self.__cache_densemask.frameofreference):
             # cached mask frameofreference is similar to current, return cached densemask volume
-            logger.debug('using cached dense mask volume')
+            # logger.debug('using cached dense mask volume')
             return self.__cache_densemask
         else:
             xstart, ystart, zstart = frameofreference.start
@@ -222,8 +222,8 @@ class ROI:
 
             # generate binary mask for each slice in frameofreference
             maskslicearray_list = []
-            logger.debug('making dense mask volume from z coordinates: {:f} to {:f}'.format(
-                         zstart, (zspace * (depth+1) + zstart)))
+            # logger.debug('making dense mask volume from z coordinates: {:f} to {:f}'.format(
+            #              zstart, (zspace * (depth+1) + zstart)))
             for i in range(depth):
                 position = zstart + i * zspace
                 # get a slice at every position within the current frameofreference
@@ -425,16 +425,14 @@ class BaseVolume:
         xstart_idx, ystart_idx, zstart_idx = self.frameofreference.getIndices(frameofreference.start)
         xend_idx, yend_idx, zend_idx = self.frameofreference.getIndices(frameofreference.end())
         cropped = self.array[zstart_idx:zend_idx, ystart_idx:yend_idx, xstart_idx:xend_idx]
-        """
-        print('original FOR= start:{:s}, spacing:{:s}, size:{:s}'.format(
+        logger.debug('original FOR= start:{:s}, spacing:{:s}, size:{:s}'.format(
                 str(self.frameofreference.start),
                 str(self.frameofreference.spacing),
                 str(self.frameofreference.size)))
-        print('new FOR= start:{:s}, spacing:{:s}, size:{:s}'.format(
+        logger.debug('new FOR= start:{:s}, spacing:{:s}, size:{:s}'.format(
                 str(frameofreference.start),
                 str(frameofreference.spacing),
                 str(frameofreference.size)))
-        """
         logger.debug('uncropped shape (z,y,x): {:s}'.format(str(self.array.shape)))
         logger.debug('cropped shape(z,y,x): {:s}'.format(str(cropped.shape)))
         logger.debug('frameofreference shape (z,y,x): ({:d}, {:d}, {:d})'.format(frameofreference.size[2],
@@ -473,17 +471,17 @@ class BaseVolume:
         # perform index bounding
         if (axis==0):
             if (idx < 0 or idx >= depth):
-                logger.exception('index out of bounds. must be between 0 -> {:d}'.format(depth))
+                logger.exception('index out of bounds. must be between 0 -> {:d}'.format(depth-1))
                 raise IndexError
             thisslice = self.array[idx, :, :]
         elif (axis==1):
             if (idx < 0 or idx >= rows):
-                logger.exception('index out of bounds. must be between 0 -> {:d}'.format(rows))
+                logger.exception('index out of bounds. must be between 0 -> {:d}'.format(rows-1))
                 raise IndexError
             thisslice = self.array[:, idx, :]
         elif (axis==2):
             if (idx < 0 or idx >= cols):
-                logger.exception('index out of bounds. must be between 0 -> {:d}'.format(cols))
+                logger.exception('index out of bounds. must be between 0 -> {:d}'.format(cols-1))
                 raise IndexError
             thisslice = self.array[:, :, idx]
         else:

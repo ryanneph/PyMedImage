@@ -218,7 +218,7 @@ def loadEntropy(entropy_pickle_path, image_volumes, radius, roi=None, savepickle
                     except:
                         logger.info(indent('error pickling: {:s}'.format(pickle_dump_path), l2_indent))
                     else:
-                        logger.info(indent('entropy pickled successfully to:\n{:s}'.format(pickle_dump_path),
+                        logger.info(indent('entropy pickled successfully to: {:s}'.format(pickle_dump_path),
                                      l2_indent))
             logger.info('')
 
