@@ -78,6 +78,11 @@ def image_entropy(image_volume, radius=2, roi=None):
     rstart, rstop = 0, r
     dstart, dstop = 0, d
 
+    # absolute max indices for imagevolume - for handling request of voxel out of bounds
+    cbound = c
+    rbound = r
+    dbound = d
+
     # restrict calculation bounds to roi
     if (roi is not None):
         # get max extents of the mask/ROI to speed up calculation only within ROI cubic volume
@@ -142,8 +147,18 @@ def image_entropy(image_volume, radius=2, roi=None):
                         for k_x in range(-radius, radius+1):
                             for k_y in range(-radius, radius+1):
                                 #logger.info('k_z:{z:d}, k_y:{y:d}, k_x:{x:d}'.format(z=k_z,y=k_y,x=k_x))
+                                # handle out of bounds requests - replace with 0
+                                request_z = z+k_z
+                                request_y = y+k_y
+                                request_x = x+k_x
+                                if (request_z >= dbound or
+                                    request_y >= rbound or
+                                    request_x >= cbound):
+                                    val = 0
+                                else:
+                                    val = get_val(image_volume, request_z, request_y, request_x)
+
                                 # Calculate probabilities
-                                val = get_val(image_volume, z+k_z, y+k_y, x+k_x)
                                 if val in val_counts:
                                     val_counts[val] += 1
                                 else:

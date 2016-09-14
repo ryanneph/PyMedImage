@@ -34,16 +34,16 @@ def create_feature_matrix(features, roi=None):
         else:
             # find highest resolution volume and use as FrameOfReference
             highest_res_volume = features[0]
-            highest_res = np.product(highest_res_volume)
+            highest_res = np.product(highest_res_volume.frameofreference.spacing)
             for volume in features[1:]:
-                res = np.product(volume.frameofreference.size)
-                if (res > highest_res):
+                res = np.product(volume.frameofreference.spacing)
+                if (res < highest_res):
                     highest_res_volume = volume
                     highest_res = res
             # assign highest res FOR as common shape
             frameofreference = highest_res_volume.frameofreference
 
-        # take the first feature vectors shape to be the reference
+        # take the selected FORs shape to be the reference
         ref_shape = frameofreference.size[::-1]  # reverses tuple from (x,y,z) to (z,y,x)
         logger.info('Common Shape (z,y,x): ({:d}, {:d}, {:d})'.format(*ref_shape))
 

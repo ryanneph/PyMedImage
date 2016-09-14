@@ -239,6 +239,35 @@ class ROI:
         """Creates a tightly bound frame of reference around the ROI which allows visualization in a cropped
         frame
         """
+        # guess at spacing and assign arbitrarily where necessary
+        # get list of points first
+        point_list = []
+        for slice in self.coordslices:
+            for point3d in slice:
+                point_list.append(point3d)
+
+        # set actually z spacing estimated from separation of coordslice point lists
+        min_z_space = 9999
+        prev_z = point_list[0][2]
+        for point3d in point_list[1:]:
+            z = point3d[2]
+            this_z_space = abs(z-prev_z)
+            if (this_z_space > 0 and this_z_space < min_z_space):
+                min_z_space = this_z_space
+            prev_z = z
+
+        if (min_z_space <= 0 or min_z_space > 10):
+            # unreasonable result found, arbitrarily set
+            new_z_space = 1
+            logger.debug('unreasonable z_spacing found: {:0.3f}, setting to {:0.3f}'.format(
+                min_z_space, new_z_space))
+            min_z_space = new_z_space
+        else:
+            logger.debug('estimated z_spacing: {:0.3f}'.format(min_z_space))
+
+        # arbitrarily set spacing
+        spacing = (1, 1, min_z_space)
+
         # get start and end of roi volume extents
         global_limits = {'xmax': -5000,
                          'ymax': -5000,
@@ -267,9 +296,6 @@ class ROI:
                 global_limits['zmax'] = zmax
 
         # build FrameOfReference
-        # assume sane spacing
-        spacing = (1, 1, 1)
-
         start = (global_limits['xmin'],
                  global_limits['ymin'],
                  global_limits['zmin'] )
@@ -441,6 +467,9 @@ class BaseVolume:
 
         zoomfactors = []
         for i in range(3):
+            if (cropped.shape[i] <= 0):
+                logger.exception('request to conform to frame outside of volume\'s frame of reference failed')
+                raise Exception()
             zoomfactors.insert(i, frameofreference.size[2-i] / cropped.shape[i])
         zoomfactors = tuple(zoomfactors)
         logger.debug('zoom factors (z, y, x): ({:0.3f}, {:0.3f}, {:0.3f})'.format(*zoomfactors))
