@@ -342,7 +342,11 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
 
 
                 # store feature matrix in pickle as numpy ndarray
-                featpickle_dump_path = pickle_dump_path.replace('clusters', 'features')
+                featpickle_dump_path = os.path.join(clusters_pickle_path,
+                        'features_{mod:s}_roi_{roiname:s}_rad{rad:d}.pickle'.format(
+                            mod=mod_string,
+                            roiname=roi.roiname,
+                            rad=radius))
                 try:
                     with open(featpickle_dump_path, mode='wb') as f:
                         pickle.dump(feature_matrix, f)
