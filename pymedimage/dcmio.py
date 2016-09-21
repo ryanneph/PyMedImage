@@ -9,8 +9,8 @@ import os
 import sys
 import logging
 import dicom
-from .misc import indent, g_indents
 from string import Template
+from utils.misc import indent, g_indents
 
 # initialize module logger
 logger = logging.getLogger(__name__)

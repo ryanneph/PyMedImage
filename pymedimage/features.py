@@ -5,8 +5,8 @@ Utility functions for calculating common image features
 """
 import logging
 import numpy as np
-from .rttypes import BaseVolume, MaskableVolume, FrameOfReference
-from .misc import g_indents, indent, timer
+from utils.rttypes import BaseVolume, MaskableVolume, FrameOfReference
+from utils.misc import g_indents, indent, timer
 import time
 import pycuda.autoinit
 import pycuda.driver as cuda

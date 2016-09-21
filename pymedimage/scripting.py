@@ -304,20 +304,21 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
                 # if no file is matched, calculate instead
                 logger.info('No pickled clusters volume found')
 
-            # get feature matrix
-            feature_matrix, clusters_frameofreference = cluster.create_feature_matrix(feature_volumes_list,
-                                                                                      roi=roi)
-
+            # get pruned feature matrix
+            pruned_feature_matrix, clusters_frameofreference, feature_matrix = cluster.create_feature_matrix(
+                                                                                        feature_volumes_list,
+                                                                                        roi=roi)
             # calculate:
-            clustering_result = cluster.cluster_kmeans(feature_matrix, nclusters)
+            clustering_result = cluster.cluster_kmeans(pruned_feature_matrix, nclusters)
 
             if clustering_result is None:
                 logger.info('Failed to compute clusters.')
             else:
                 logger.info('Clusters computed successfully')
 
-                # create MaskableVolume from clustering_result
-                clusters = MaskableVolume().fromArray(clustering_result, clusters_frameofreference)
+                # expand sparse cluster assignment vector to dense MaskableVolume
+                clusters = cluster.expand_pruned_vector(clustering_result, roi, clusters_frameofreference,
+                                                        fill_value=-1)
 
                 # pickle for later recall
                 if (roi is not None):
@@ -349,7 +350,7 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
                             rad=radius))
                 try:
                     with open(featpickle_dump_path, mode='wb') as f:
-                        pickle.dump(feature_matrix, f)
+                        pickle.dump(feature_matrix, f)  # dense form
                 except:
                     logger.info('error pickling: {:s}'.format(featpickle_dump_path))
                 else:

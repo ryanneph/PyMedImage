@@ -10,7 +10,7 @@ import dicom  # pydicom
 import pickle
 from PIL import Image, ImageDraw
 from scipy.ndimage import interpolation
-from . import dcmio, misc
+from utils import dcmio, misc
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -171,7 +171,7 @@ class ROI:
         # check if our result is actually valid or we just hit the end of the array
         if minerror >= tolerance:
             logger.debug('No slice found within {:f} mm of position {:f}'.format(tolerance, position))
-            return np.ones((rows, cols))
+            return np.zeros((rows, cols))
         logger.debug('slice found at {:f} for position query at {:f}'.format(coordslice[0][2], position))
 
         # get coordinate values
