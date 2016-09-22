@@ -176,7 +176,10 @@ def loadEntropy(entropy_pickle_path, image_volumes, radius, roi=None, savepickle
                 logger.info(indent('Pickled entropy vector found ({mod:s}). Loading.'.format(mod=mod), l2_indent))
                 try:
                     path = os.path.join(entropy_pickle_path, match)
-                    entropy_volumes[mod] = MaskableVolume().fromPickle(path)
+                    vol = MaskableVolume().fromPickle(path)
+                    vol.mod = mod
+                    vol.feature_label = 'entropy'
+                    entropy_volumes[mod] = vol
                 except:
                     logger.info(indent('there was a problem loading the file: {path:s}'.format(path=path),
                                  l2_indent))
@@ -305,9 +308,9 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
                 logger.info('No pickled clusters volume found')
 
             # get pruned feature matrix
-            pruned_feature_matrix, clusters_frameofreference, feature_matrix = cluster.create_feature_matrix(
-                                                                                        feature_volumes_list,
-                                                                                        roi=roi)
+            pruned_feature_matrix, clusters_frameofreference, \
+                feature_matrix, feat_column_labels = cluster.create_feature_matrix(feature_volumes_list,
+                                                                                   roi=roi)
             # calculate:
             clustering_result = cluster.cluster_kmeans(pruned_feature_matrix, nclusters)
 
@@ -349,8 +352,11 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
                             roiname=roi.roiname,
                             rad=radius))
                 try:
+                    # package feature_matrix into dict with labeling of the featues associate with each column
+                    featpickle_dict = {'feature_matrix': feature_matrix,
+                                       'labels':         feat_column_labels}
                     with open(featpickle_dump_path, mode='wb') as f:
-                        pickle.dump(feature_matrix, f)  # dense form
+                        pickle.dump(featpickle_dict, f)  # dense form
                 except:
                     logger.info('error pickling: {:s}'.format(featpickle_dump_path))
                 else:

@@ -40,6 +40,8 @@ def image_entropy(image_volume, radius=2, roi=None):
 
         #instantiate a blank BaseVolume of the proper size
         H = MaskableVolume().fromArray(np.zeros((d, r, c)), image_volume.frameofreference)
+        H.modality = image_volume.modality
+        H.feature_label = 'entropy'
     elif isinstance(image_volume, np.ndarray):
         if image_volume.ndim == 3:
             c, r, d = image_volume.shape
@@ -63,10 +65,10 @@ def image_entropy(image_volume, radius=2, roi=None):
         return None
 
     # z_radius_range controls 2d neighborhood vs 3d neighborhood for 2d vs 3d images
-    if d == 1: #2D image
+    if d == 1:  # 2D image
         logger.debug(indent('Computing 2D entropy with radius: {:d}'.format(radius), l3))
         z_radius_range = [0]
-    elif d>1: # 3D image
+    elif d > 1:  # 3D image
         logger.debug(indent('Computing 3D entropy with radius: {:d}'.format(radius), l3))
         z_radius_range = range(-radius, radius+1)
 
@@ -104,7 +106,7 @@ def image_entropy(image_volume, radius=2, roi=None):
         entropy_frameofreference = FrameOfReference((extents.start),
                                                     (image_volume.frameofreference.spacing),
                                                     (c_subset, r_subset, d_subset))
-        H = MaskableVolume().fromArray(np.zeros((d_subset, r_subset, c_subset)), entropy_frameofreference)
+        H = H.fromArray(np.zeros((d_subset, r_subset, c_subset)), entropy_frameofreference)
     else:
         d_subset = dstop - dstart
         r_subset = rstop - rstart

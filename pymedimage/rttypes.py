@@ -8,6 +8,7 @@ import logging
 import numpy as np
 import dicom  # pydicom
 import pickle
+import copy
 from PIL import Image, ImageDraw
 from scipy.ndimage import interpolation
 from utils import dcmio, misc
@@ -321,6 +322,7 @@ class BaseVolume:
         self.frameofreference = None
         self.rescaleparams = None
         self.modality = None
+        self.feature_label = None
 
     # CONSTRUCTOR METHODS
     def fromArray(self, array, frameofreference):
@@ -387,7 +389,12 @@ class BaseVolume:
         UID = dataset_list[0].FrameOfReferenceUID
 
         self.frameofreference = FrameOfReference(start, spacing, size, UID)
-        self.modality = dataset_list[0].Modality
+
+        # standardize modality labels
+        mod = dataset_list[0].Modality
+        if (mod == 'PT'):
+            mod = 'PET'
+        self.modality = mod
 
         # construct 3dArray
         array_list = []
@@ -476,7 +483,8 @@ class BaseVolume:
         resampled_array = interpolation.zoom(cropped, zoomfactors, order=3, mode='constant', cval=0)
 
         # reconstruct volume from resampled array
-        resampled_volume = BaseVolume().fromArray(resampled_array, frameofreference)
+        resampled_volume = copy.deepcopy(self)
+        resampled_volume.fromArray(resampled_array, frameofreference)
         return resampled_volume
 
     def getSlice(self, idx, axis=0, rescale=False, flatten=False):
@@ -592,7 +600,7 @@ class MaskableVolume(BaseVolume):
         super().__init__()
 
     def conformTo(self, frameofreference):
-        """Resamples the current MaskableVolume to the supplied FrameOfReference
+        """Resamples the current MaskableVolume to the supplied FrameOfReference and returns a new Volume
 
         Args:
             frameofreference   -- FrameOfReference object to resample the MaskableVolume to
@@ -601,9 +609,28 @@ class MaskableVolume(BaseVolume):
             MaskableVolume
         """
         base = super().conformTo(frameofreference)
-        maskable = MaskableVolume().fromArray(base.array, base.frameofreference)
+        maskable = MaskableVolume().fromBaseVolume(base)
         return maskable
 
+    # CONSTRUCTOR METHODS
+    def fromBaseVolume(self, base):
+        """promotion constructor that converts baseVolume to MaskableVolume, retaining member variables
+
+        Args:
+            base -- BaseVolume object
+
+        Returns:
+            MaskableVolume
+        """
+        # copy attributes
+        self.array = base.array
+        self.frameofreference = copy.deepcopy(base.frameofreference)
+        self.rescaleparams = copy.deepcopy(base.rescaleparams)
+        self.modality = base.modality
+        self.feature_label = base.feature_label
+        return self
+
+    # PUBLIC METHODS
     def getSlice(self, idx, axis=0, rescale=False, flatten=False, roi=None):
         """Extracts 2dArray of idx along the axis.
         Args:

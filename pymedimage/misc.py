@@ -115,3 +115,21 @@ def findFiles(root, type=None, keywordlist=None, casesensitive=False, recursive=
     else:
         logger.debug('no files found')
         return None
+
+def generate_heatmap_label(volume):
+    """takes a BaseVolume or derivative and produces a heatmap feature label
+    """
+    mod = volume.modality
+    feature_label = volume.feature_label
+    if (feature_label):
+        label = '{feat!s}({mod!s})'.format(feat = feature_label.title(),
+                                           mod  = mod)
+    else:
+        if ('ct' in mod.lower()):
+            label = 'CT #'
+        elif ('pet' in mod.lower() or 'pt' in mod.lower()):
+            label = 'PET SUV'
+        else:
+            label = mod.upper()
+
+    return label

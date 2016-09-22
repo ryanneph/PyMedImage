@@ -6,7 +6,7 @@ from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.preprocessing import StandardScaler
 import scipy.cluster.hierarchy as sch
 import numpy as np
-from utils.misc import indent, g_indents
+from utils.misc import indent, g_indents, generate_heatmap_label
 from utils.rttypes import MaskableVolume
 
 # initialize module logger
@@ -86,6 +86,7 @@ def expand_pruned_vector(pruned_vector, roi, frameofreference, fill_value=-1):
     # convert to MaskableVolume
     return MaskableVolume().fromArray(expanded_vector, frameofreference)
 
+
 def create_feature_matrix(feature_volumes, roi=None):
     """takes a list of feature BaseVolumes and combines them into a numpy ndarray of N rows and D features
 
@@ -125,6 +126,7 @@ def create_feature_matrix(feature_volumes, roi=None):
         # create list of commonly shaped feature vectors
         conformed_feature_list = []
         dense_feature_list = []
+        feature_column_labels = []
         for i, vol in enumerate(feature_volumes):
             # check for invalid feature
             if (vol is None):
@@ -146,6 +148,9 @@ def create_feature_matrix(feature_volumes, roi=None):
                 pruned_feature_vector = create_pruned_vector(conformed_volume, roi)
                 conformed_feature_list.append(pruned_feature_vector)
                 dense_feature_list.append(conformed_volume.vectorize(roi).reshape((-1, 1)))
+                # label generator
+                label = generate_heatmap_label(conformed_volume)
+                feature_column_labels.append(label)
 
         # combine accepted features into array of shape (nSamples, nFeatures)
         pruned_feature_array = np.concatenate(conformed_feature_list, axis=1)
@@ -156,7 +161,7 @@ def create_feature_matrix(feature_volumes, roi=None):
             n=pruned_feature_array.shape[1],
             shape=str(pruned_feature_array.shape))
             , g_indents[1]))
-        return (pruned_feature_array, frameofreference, dense_feature_array)
+        return (pruned_feature_array, frameofreference, dense_feature_array, feature_column_labels)
 
 
 def cluster_kmeans(feature_matrix, nclusters=10, eps=1e-4):
