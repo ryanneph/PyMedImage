@@ -133,3 +133,26 @@ def generate_heatmap_label(volume):
             label = mod.upper()
 
     return label
+
+def getPatientPaths(root, includeignored=False, child_dirname='precomputed'):
+    """find all patient dirs beneath root recursively and return list of full paths to these dirs
+
+    Args:
+        root -- path to search under recursively
+
+    Optional Args:
+        includeignored -- include patient_dirs with prefix '_'?
+        precomputed_dirname -- set custom child dir for recognizing a patient dir
+    """
+    # walk filesystem to find patient_dirs
+    patient_dirs = []
+    for walkroot, dirs, files in os.walk(root, followlinks=True):
+        # identify patient dirs by presence of 'precomputed' directory one level deep
+        if (os.path.isdir(os.path.join(walkroot, child_dirname))
+            and (includeignored or os.path.basename(walkroot)[0] != '_')):
+            patient_dirs.append(walkroot)
+            # we've reached patient dir, dont go any deeper in this root
+            del dirs[:]
+            continue
+
+    return patient_dirs
