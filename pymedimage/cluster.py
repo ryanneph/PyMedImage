@@ -13,6 +13,13 @@ from utils.rttypes import MaskableVolume
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
+# module level variables
+GLOBAL = {'scipy_hcluster_valid_methods': ['ward', 'single', 'complete', 'average', 'weighted',
+                                          'centroid', 'median'],
+          'scipy_hcluster_valid_metrics': ['euclidean', 'cityblock', 'minkowski', 'sqeuclidean',
+                                          'seuclidean', 'cosine']
+          }
+
 def create_pruned_vector(volume, roi):
     """takes a BaseVolume and creates a vector of intensities where all masked voxels are excluded
 
@@ -298,14 +305,14 @@ def cluster_hierarchical_scipy(feature_matrix, nclusters=3, metric='euclidean', 
     normalized_feature_matrix = normalizer.fit_transform(feature_matrix)
 
     # determine valid parameters
-    valid_method = ['ward', 'single', 'complete', 'average', 'weighted', 'centroid', 'median']
+    valid_method = GLOBAL['scipy_hcluster_valid_methods']
     if (method not in valid_method):
         logger.exception('method must be one of {!s}'.format(valid_method))
         raise ValueError(str)
     if (method is 'maximum'):
         method = 'complete'
 
-    valid_metric = ['euclidean', 'cityblock', 'minkowski', 'sqeuclidean', 'seuclidean', 'cosine']
+    valid_metric = GLOBAL['scipy_hcluster_valid_metrics']
     if (metric not in valid_metric):
         logger.exception('metric must be one of {!s}'.format(valid_metric))
         raise ValueError(str)
