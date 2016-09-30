@@ -12,7 +12,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-def writeFigureToFile(fig, path, removeaxes=True, overwrite=False):
+def writeFigureToFile(fig, path, removeaxes=False, overwrite=False):
     """Standardized method to write figure to file with existence checking and overwrite switch
 
     Args:
