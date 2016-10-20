@@ -417,10 +417,15 @@ class BaseVolume:
             basevolumepickle = pickle.load(p)
 
         # import data to this object
-        self.array = basevolumepickle.dataarray
-        self.frameofreference = FrameOfReference(basevolumepickle.startposition,
-                                                 basevolumepickle.spacing,
-                                                 basevolumepickle.size)
+        try:
+            self.array = basevolumepickle.dataarray
+            self.frameofreference = FrameOfReference(basevolumepickle.startposition,
+                                                     basevolumepickle.spacing,
+                                                     basevolumepickle.size)
+            self.modality = basevolumepickle.modality
+            self.feature_label = basevolumepickle.feature_label
+        except:
+            raise PickleOutdatedError()
         return self
 
     def toPickle(self, pickle_path):
@@ -431,6 +436,8 @@ class BaseVolume:
         basevolumepickle.spacing = self.frameofreference.spacing
         basevolumepickle.size = self.frameofreference.size
         basevolumepickle.dataarray = self.array
+        basevolumepickle.modality = self.modality
+        basevolumepickle.feature_label = self.feature_label
 
         with open(pickle_path, 'wb') as p:
             pickle.dump(basevolumepickle, p)
@@ -557,14 +564,14 @@ class BaseVolume:
         (cols, rows, depth) = frameofreference.size
 
         # perform index bounding
-        if (x < 0 or x >= rows):
-            logger.exception('x index out of bounds. must be between 0 -> {:d}'.format(cols-1))
+        if (x < 0 or x >= cols):
+            logger.exception('x index ({:d}) out of bounds. must be between 0 -> {:d}'.format(x, cols-1))
             raise IndexError
-        if (y < 0 or y >= cols):
-            logger.exception('y index out of bounds. must be between 0 -> {:d}'.format(rows-1))
+        if (y < 0 or y >= rows):
+            logger.exception('y index ({:d}) out of bounds. must be between 0 -> {:d}'.format(y, rows-1))
             raise IndexError
         if (z < 0 or z >= depth):
-            logger.exception('z index out of bounds. must be between 0 -> {:d}'.format(depth-1))
+            logger.exception('z index ({:d}) out of bounds. must be between 0 -> {:d}'.format(z, depth-1))
             raise IndexError
 
         return self.array[z, y, x]
@@ -578,13 +585,13 @@ class BaseVolume:
 
         # perform index bounding
         if (x < 0 or x >= cols):
-            logger.exception('x index out of bounds. must be between 0 -> {:d}'.format(cols-1))
+            logger.exception('x index ({:d}) out of bounds. must be between 0 -> {:d}'.format(x, cols-1))
             raise IndexError
         if (y < 0 or y >= rows):
-            logger.exception('y index out of bounds. must be between 0 -> {:d}'.format(rows-1))
+            logger.exception('y index ({:d}) out of bounds. must be between 0 -> {:d}'.format(y, rows-1))
             raise IndexError
         if (z < 0 or z >= depth):
-            logger.exception('z index out of bounds. must be between 0 -> {:d}'.format(depth-1))
+            logger.exception('z index ({:d}) out of bounds. must be between 0 -> {:d}'.format(z, depth-1))
             raise IndexError
 
         # reassign value
@@ -676,11 +683,18 @@ class MaskableVolume(BaseVolume):
         return array
 
 
+class PickleOutdatedError(Exception):
+    def __init__(self):
+        super().__init__('a missing value was requested from a BaseVolumePickle object')
+
+
 class BaseVolumePickle:
     """Defines common object that can store feature data for long term I/O
     """
     def __init__(self):
-        self.dataarray = None       # numpy ndarray
-        self.startposition = None   # (x, y, z)<float>
-        self.spacing = None         # (x, y, z)<float>
-        self.size = None            # (x, y, z)<integer>
+        self.dataarray     = None  # numpy ndarray
+        self.startposition = None  # (x, y, z)<float>
+        self.spacing       = None  # (x, y, z)<float>
+        self.size          = None  # (x, y, z)<integer>
+        self.modality      = None  # string
+        self.feature_label = None  # string
