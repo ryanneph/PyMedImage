@@ -5,7 +5,10 @@ Utility functions for calculating common image features
 """
 import logging
 import numpy as np
+import math
+from collections import OrderedDict
 import scipy.ndimage
+import scipy.stats
 import pywt
 from utils.rttypes import BaseVolume, MaskableVolume, FrameOfReference
 from utils.misc import g_indents, indent, timer
@@ -22,6 +25,62 @@ logger.addHandler(logging.NullHandler())
 # indent shortnames
 l3 = g_indents[3]
 l4 = g_indents[4]
+
+class LocalFeatureDefinition:
+    """Standard feature definition for use in scripts. provides plug-in ensuring consistent definition"""
+    def __init__(self, label, calculation_function, recalculate=False, args=None):
+        """
+        Args:
+            label -- string
+            calculation_function -- function pointer for patch based local feature calcuation matching
+                                    signature: calculation_function(ndArray)
+        Optional Args:
+            recalculate -- parsed arg or bool literal indicating if feature should be recalculated and pickled
+            args -- dict of arg key:value pairs where key exactly matches the kwarg key for calculation_function
+        """
+        self.label = label
+        self.calculation_function = calculation_function
+        self.recalculate = recalculate
+        self.args = OrderedDict()
+
+    def addArg(self, key, value):
+        """abstracts away the complexities of initializing an ordereddict with lists of tuples..."""
+        self.args[key] = value
+
+class FeatureList():
+    def __init__(self, feature_def_list=None):
+        if (feature_def_list and isinstance(feature_def_list, list)):
+            self.__storage = feature_def_list
+        else:
+            self.__storage = []
+
+    def append(self, item):
+        self.__storage.append(item)
+
+    def __findbylabel(self, key):
+        for item in self.__storage:
+            label = item.label
+            if (label == key):
+                return item
+        raise KeyError
+
+    def __getitem__(self, key):
+        nitems = len(self.__storage)
+        if (isinstance(key, str)):
+            return self.__findbylabel(key)
+
+        if (key >= nitems):
+            raise IndexError
+        elif (key < 0):
+            if (math.abs(key) > nitems):
+                raise IndexError
+            else:
+                key = nitems + key
+        return self.__storage.__getitem__(key)
+
+    def __len__(self):
+        return len(self.__storage)
+
 
 def image_iterator(processing_function, image_volume, radius=2, roi=None):
     """compute the pixel-wise feature of an image over a region defined by neighborhood
@@ -50,9 +109,9 @@ def image_iterator(processing_function, image_volume, radius=2, roi=None):
         # feature_volume.feature_label = 'feature'
     elif isinstance(image_volume, np.ndarray):
         if image_volume.ndim == 3:
-            c, r, d = image_volume.shape
+            d, r, c = image_volume.shape
         elif image_volume.ndim == 2:
-            c, r, d = (1, *image_volume.shape)
+            d, r, c = (1, *image_volume.shape)
             image_volume = image_volume.reshape((d, r, c))
 
         # instantiate a blank np.ndarray of the proper size
@@ -78,36 +137,42 @@ def image_iterator(processing_function, image_volume, radius=2, roi=None):
         logger.debug(indent('Computing 3D feature with radius: {:d}'.format(radius), l3))
         z_radius_range = range(-radius, radius+1)
 
-    # in plane range
+    # in plane patch range
     radius_range = range(-radius, radius+1)
 
     # timing
     start_feature_calc = time.time()
 
-    # set calculation bounds
-    cstart, cstop = 0, c-1
-    rstart, rstop = 0, r-1
-    dstart, dstop = 0, d-1
 
     # absolute max indices for imagevolume - for handling request of voxel out of bounds
-    cbound = c-1
-    rbound = r-1
-    dbound = d-1
+    cbound = c
+    rbound = r
+    dbound = d
+
+    # set calculation index bounds -- will be redefined if roi is specified
+    cstart, cstop = 0, cbound
+    rstart, rstop = 0, rbound
+    dstart, dstop = 0, dbound
+
+    # defines dimensionality
+    d_subset = dstop - dstart
+    r_subset = rstop - rstart
+    c_subset = cstop - cstart
 
     # restrict calculation bounds to roi
     if (roi is not None):
         # get max extents of the mask/ROI to speed up calculation only within ROI cubic volume
         extents = roi.getROIExtents()
         cstart, rstart, dstart = image_volume.frameofreference.getIndices(extents.start)
-        cstop, rstop, dstop = image_volume.frameofreference.getIndices(extents.end())
+        cstop, rstop, dstop = np.subtract(image_volume.frameofreference.getIndices(extents.end()), 1)
         logger.info(indent('calculation subset volume x=({xstart:d}->{xstop:d}), '
                                                'y=({ystart:d}->{ystop:d}), '
                                                'z=({zstart:d}->{zstop:d})'.format(zstart=dstart,
-                                                                                  zstop=dstop-1,
+                                                                                  zstop=dstop,
                                                                                   ystart=rstart,
-                                                                                  ystop=rstop-1,
+                                                                                  ystop=rstop,
                                                                                   xstart=cstart,
-                                                                                  xstop=cstop-1 ), l4))
+                                                                                  xstop=cstop ), l4))
         # redefine feature_volume
         d_subset = dstop - dstart
         r_subset = rstop - rstart
@@ -116,10 +181,6 @@ def image_iterator(processing_function, image_volume, radius=2, roi=None):
                                                     (image_volume.frameofreference.spacing),
                                                     (c_subset, r_subset, d_subset))
         feature_volume = feature_volume.fromArray(np.zeros((d_subset, r_subset, c_subset)), feature_frameofreference)
-    else:
-        d_subset = dstop - dstart
-        r_subset = rstop - rstart
-        c_subset = cstop - cstart
 
     # nested loop approach -> slowest, try GPU next
     total_voxels = d * r * c
@@ -190,31 +251,6 @@ def image_iterator(processing_function, image_volume, radius=2, roi=None):
     end_feature_calc = time.time()
     logger.debug(timer('feature calculation time:', end_feature_calc-start_feature_calc, l3))
     return feature_volume
-
-def entropy_plugin(patch_vals):
-    val_counts = {}
-
-    # get occurence counts
-    for val in patch_vals.flatten().tolist():
-        if val in val_counts:
-            val_counts[val] += 1
-        else:
-            val_counts[val] = 1
-
-    #create new dict to store class probabilities
-    val_probs = np.zeros(((len(val_counts))))
-    total_counts = sum(val_counts.values())
-    for i, val in enumerate(val_counts.keys()):
-        val_probs[i] = val_counts[val]/total_counts
-    # calculate local entropy
-    h = -np.sum(val_probs*np.log(val_probs)) #/ np.log(65536)
-
-    return h
-
-
-def image_entropy(image_volume, radius=2, roi=None):
-    return image_iterator(entropy_plugin, image_volume, radius, roi)
-
 
 def image_entropy_gpu(image_vect, radius=2):
     """Uses PyCuda to parallelize the computation of the voxel-wise image entropy using a variable neighborhood radius
@@ -293,14 +329,79 @@ def image_entropy_gpu(image_vect, radius=2):
     return result.reshape(r,c)
 
 
+def energy_plugin(patch_vals):
+    val_counts = {}
+
+    # get occurence counts
+    for val in patch_vals.flatten().tolist():
+        if val in val_counts:
+            val_counts[val] += 1
+        else:
+            val_counts[val] = 1
+
+    # create new dict to store class probabilities
+    val_probs = np.zeros(((len(val_counts))))
+    total_counts = sum(val_counts.values())
+    for i, val in enumerate(val_counts.keys()):
+        val_probs[i] = val_counts[val]/total_counts
+    # calculate energy
+    return math.sqrt(np.dot(val_probs, val_probs))
+
+def entropy_plugin(patch_vals):
+    val_counts = {}
+
+    # get occurence counts
+    for val in patch_vals.flatten().tolist():
+        if val in val_counts:
+            val_counts[val] += 1
+        else:
+            val_counts[val] = 1
+
+    #create new dict to store class probabilities
+    val_probs = np.zeros(((len(val_counts))))
+    total_counts = sum(val_counts.values())
+    for i, val in enumerate(val_counts.keys()):
+        val_probs[i] = val_counts[val]/total_counts
+    # calculate local entropy
+    h = -np.sum(val_probs*np.log(val_probs)) #/ np.log(65536)
+
+    return h
+
+
+def image_entropy(image_volume, radius=2, roi=None):
+    return image_iterator(entropy_plugin, image_volume, radius, roi)
+
+def image_energy(image_volume, radius=2, roi=None):
+    return image_iterator(energy_plugin, image_volume, radius, roi)
+
+
 def wavelet_decomp_3d(image_volume, wavelet_str='db1', mode_str='smooth'):
     """perform full 3d wavelet decomp and return coefficients"""
     coeffs = pywt.wavedecn(image_volume.array, wavelet_str, mode_str)
     return coeffs
 
-def wavelet_energy_plugin(patch_vals):
-    patch_vals = patch_vals.flatten()
-    return np.true_divide(np.dot(patch_vals, patch_vals), pow(len(patch_vals), 2))
+
+def wavelet_entropy(image_volume, radius=2, roi=None, wavelet_str='db1', mode_str='smooth'):
+    # compute wavelet coefficients
+    logger.info(indent('performing 3d wavelet decomp using wavelet: {!s}'.format(wavelet_str), g_indents[3]))
+    roi_volume = image_volume.conformTo(roi.frameofreference)
+    wavelet_coeffs = wavelet_decomp_3d(roi_volume, wavelet_str, mode_str)
+    nlevels = len(wavelet_coeffs) - 1
+    # level_results = []
+    accumulator = np.zeros(roi_volume.frameofreference.size[::-1])
+    # sum voxel-wise energy across all levels
+    for level in range(nlevels-1, 0, -1):
+        wavelet_coeffs_diag = wavelet_coeffs[level+1]['ddd']
+        logger.info(indent('computing entropy for level {:d} of shape:{!s}'.format(level, wavelet_coeffs_diag.shape), g_indents[3]))
+        result = image_iterator(entropy_plugin, wavelet_coeffs_diag, radius)
+
+        zoomfactors = tuple(np.true_divide(roi_volume.frameofreference.size[::-1], result.shape))
+        # scale low-res coefficients to image res
+        result = scipy.ndimage.interpolation.zoom(result, zoomfactors, order=3)
+        result = MaskableVolume().fromArray(result, roi_volume.frameofreference)
+        # level_results.append(result)
+        accumulator = np.add(accumulator, result.array)
+    return MaskableVolume().fromArray(accumulator, roi_volume.frameofreference)
 
 def wavelet_energy(image_volume, radius=2, roi=None, wavelet_str='db1', mode_str='smooth'):
     # compute wavelet coefficients
@@ -313,14 +414,169 @@ def wavelet_energy(image_volume, radius=2, roi=None, wavelet_str='db1', mode_str
     # sum voxel-wise energy across all levels
     for level in range(nlevels-1, 0, -1):
         wavelet_coeffs_diag = wavelet_coeffs[level+1]['ddd']
-        zoomfactors = tuple(np.true_divide(roi_volume.frameofreference.size[::-1], wavelet_coeffs_diag.shape))
-        # scale low-res coefficients to image res
-        upsampled_roi_volume = scipy.ndimage.interpolation.zoom(wavelet_coeffs_diag,
-                                                                  zoomfactors, order=3)
-        upsampled_roi_volume = MaskableVolume().fromArray(upsampled_roi_volume, roi_volume.frameofreference)
         logger.info(indent('computing energy for level {:d} of shape:{!s}'.format(level, wavelet_coeffs_diag.shape), g_indents[3]))
-        result = image_iterator(wavelet_energy_plugin, upsampled_roi_volume, radius)
+        result = image_iterator(energy_plugin, wavelet_coeffs_diag, radius)
 
+        zoomfactors = tuple(np.true_divide(roi_volume.frameofreference.size[::-1], result.shape))
+        # scale low-res coefficients to image res
+        result = scipy.ndimage.interpolation.zoom(result, zoomfactors, order=3)
+        result = MaskableVolume().fromArray(result, roi_volume.frameofreference)
         # level_results.append(result)
         accumulator = np.add(accumulator, result.array)
     return MaskableVolume().fromArray(accumulator, roi_volume.frameofreference)
+
+def wavelet_raw(image_volume, radius=2, roi=None, wavelet_str='db1', mode_str='smooth', level=0):
+    # compute wavelet coefficients
+    logger.info(indent('performing 3d wavelet decomp using wavelet: {!s}'.format(wavelet_str), g_indents[3]))
+    roi_volume = image_volume.conformTo(roi.frameofreference)
+    wavelet_coeffs = wavelet_decomp_3d(roi_volume, wavelet_str, mode_str)
+    nlevels = len(wavelet_coeffs) - 1
+    wavelet_coeffs_diag = wavelet_coeffs[nlevels-level]['ddd']
+    zoomfactors = tuple(np.true_divide(roi_volume.frameofreference.size[::-1], wavelet_coeffs_diag.shape))
+    # scale low-res coefficients at highest level to image res
+    result = scipy.ndimage.interpolation.zoom(wavelet_coeffs_diag, zoomfactors, order=3)
+    result = MaskableVolume().fromArray(result, roi_volume.frameofreference)
+    return result
+
+def glcm_polar(patch_vals, d, theta):
+    """convenience function for converting spherical coords to euclidean coords"""
+    #TODO
+    #return glcm(patch_vals, dx, dy, dz)
+    pass
+
+def quantize(image_patch, gray_levels=12, n_stddev=2):
+    """quantize the patch into specified number of bins, where first and last bins hold outliers and the rest\
+            are allocated for storing values centered around mean within +-(n_stddev * stddev)
+    Args:
+        image_patch -- numpy ndarray
+    Optional Args:
+        n_stddev    -- quantize within +-(n_stddev * stddev), placing outliers in first and last bins
+        gray_levels -- total bins (including outlier bins)
+    """
+    # compute gray level gaussian stats
+    mean = np.mean(image_patch)
+    stddev = np.std(image_patch)
+    # logger.debug('mean:    {!s}\nstd dev: {!s}'.format(mean, stddev))
+    bin_width = 2*n_stddev*stddev / (gray_levels-2)
+    # logger.debug('bin_width: {!s}'.format(bin_width))
+
+    # rebin values into new quanization, first and last bins hold outliers
+    quantized_image_patch = np.zeros_like(image_patch, dtype=np.int8)
+    it = np.nditer(image_patch, op_flags=['readwrite'], flags=['multi_index'])
+    while not it.finished:
+        val = image_patch[it.multi_index]
+        quantized_image_patch[it.multi_index] = min(gray_levels-1, max(0, math.floor(((val - mean + n_stddev*stddev)/bin_width)+1)))
+        it.iternext()
+
+    # import matplotlib.pyplot as plt
+    # xy_shape = quantized_image_patch.shape[1:]
+    # for z in range(quantized_image_patch.shape[0]):
+    #     fig = plt.figure()
+    #     ax = fig.add_subplot(1,2,1)
+    #     ax.imshow(image_patch[z,:,:].reshape(xy_shape), cmap='gray')
+    #     ax = fig.add_subplot(1,2,2)
+    #     ax.imshow(quantized_image_patch[z,:,:].reshape(xy_shape), cmap='gray', vmin=0, vmax=gray_levels-1)
+    #     plt.show()
+    return quantized_image_patch
+
+def glcmMatrix(image_patch, dx, dy, dz, symmetric=False, normalized=False):
+    # logger.debug('offsets-> dx:{:d}, dy:{:d}, dz:{:d}'.format(dx, dy, dz))
+    levels = np.max(image_patch)
+    glcm_matrix = np.zeros((levels+1, levels+1))
+    # loop through and accumulate counts
+    it = np.nditer(image_patch, op_flags=['readwrite'], flags=['multi_index'])
+    while (not it.finished):
+        y_idx = image_patch[it.multi_index]
+        # logger.debug('parent loc: ({!s}) -> y_idx: {!s}'.format(it.multi_index, y_idx))
+        x_idx_query = tuple(np.add(it.multi_index, (dz, dy, dx)))
+        # boundary handling
+        for i in range(3):
+            s = image_patch.shape[i]
+            q = x_idx_query[i]
+            if (x_idx_query[i] >= image_patch.shape[i]):
+                x_idx_query = list(x_idx_query)
+                x_idx_query[i] = s - abs(q-s) - 1
+                x_idx_query = tuple(x_idx_query)
+            if (x_idx_query[i] < 0):
+                x_idx_query = list(x_idx_query)
+                x_idx_query[i] = s - abs(q-s) - 1
+                x_idx_query = tuple(x_idx_query)
+        x_idx = image_patch[x_idx_query]
+        # logger.debug('  child loc: ({!s}) -> x_idx: {!s}'.format(x_idx_query, x_idx))
+        glcm_matrix[y_idx, x_idx] += 1
+        if (symmetric and x_idx != y_idx):
+            # fill lower_diagonal values
+            glcm_matrix[x_idx, y_idx] += 1
+        it.iternext()
+
+    # normalize counts
+    if (normalized):
+        total_counts = np.sum(glcm_matrix)
+        for val in np.nditer(glcm_matrix, op_flags=["readwrite"]):
+            val = val / total_counts
+
+    return glcm_matrix
+
+def glcm_stat_mean(glcm_matrix):
+    """glcm statistic evaluation method"""
+    return np.mean(glcm_matrix)
+
+def glcm_stat_contrast(glcm_matrix):
+    """glcm statistic evaluation method"""
+    it = np.nditer(glcm_matrix, flags=['multi_index'])
+    accum = 0
+    while (not it.finished):
+        accum += glcm_matrix[it.multi_index] * pow(np.diff(it.multi_index), 2)
+        it.iternext()
+    return accum
+
+def glcm_stat_energy(glcm_matrix):
+    """glcm statistic evaluation method"""
+    return np.sum(np.square(glcm_matrix))
+
+def glcm_stat_dissimilarity(glcm_matrix):
+    """glcm statistic evaluation method"""
+    it = np.nditer(glcm_matrix, flags=['multi_index'])
+    accum = 0
+    while (not it.finished):
+        accum += glcm_matrix[it.multi_index] * abs(np.diff(it.multi_index))
+        it.iternext()
+    return accum
+
+def glcm_stat_homogeneity(glcm_matrix):
+    """glcm statistic evaluation method"""
+    it = np.nditer(glcm_matrix, flags=['multi_index'])
+    accum = 0
+    while (not it.finished):
+        accum += glcm_matrix[it.multi_index] / (1 + pow(np.diff(it.multi_index), 2))
+        it.iternext()
+    return accum
+
+
+def glcm(image_volume, glcm_stat_function, radius=2, roi=None, gray_levels=12, n_stddev=2, dx=0, dy=0, dz=0):
+    """feature calculation entry function"""
+    # lexical scoping allows glcm to be adapted as a higher-order function then fed to image_iterator()
+    def glcm_eval(patch_vals):
+        """takes an ndarray of values in an image/volume patch and computes a single grey-level co-occurence matrix \
+        based on the distance and angle in radians
+
+        Args:
+            patch_vals -- ndarray extracted for a neighborhood around a voxel in ImageIterator()
+            d<dir> -- distance of query in direction as signed integer
+            gray_levels -- gray_levels are binned according to uniform thresholding within +- 2std-dev,
+                           lowest and highest bins hold outliers and total bin count will be equal to requested
+        """
+        # ALL ARE PATCH OPERATIONS
+        # quantize image patch
+        # logger.debug('quantizing image patch of shape: ({!s})'.format(patch_vals.shape))
+        quantized_image_patch = quantize(patch_vals, gray_levels, n_stddev)
+        # generate glcm using mirrored boundaries
+        glcm_matrix = glcmMatrix(quantized_image_patch, dx, dy, dz)
+        # calculate statistic on glcm_matrix
+        result = glcm_stat_function(glcm_matrix)
+
+        return result
+
+    # build patch-eval function
+    return image_iterator(glcm_eval, image_volume, radius, roi)
+

@@ -6,6 +6,7 @@ A collection of functions/methods that carry us from one step to another in the 
 import os
 import logging
 import pickle
+from collections import OrderedDict
 from utils.rttypes import MaskableVolume, ROI
 from utils.misc import indent, g_indents, findFiles
 from utils import dcmio, cluster, rttypes
@@ -40,7 +41,7 @@ def loadImages(images_path, modalities):
             logger.info('No modalities supplied. skipping')
             return None
         else:
-            volumes = {}
+            volumes = OrderedDict()
             for mod in modalities:
                 logger.info(indent('Importing {mod:s} images'.format(mod=mod.upper()), l1_indent))
                 dicom_path = os.path.join(images_path, '{mod:s}'.format(mod=mod))
@@ -138,9 +139,12 @@ def getFeatureKeywords(feature_name, args):
     keywords = ['feature={!s}'.format(feature_name)] + \
                ['{argname!s}={argval!s}'.format(argname=n, argval=v)
                 for (n, v) in args.items()]
+    for item in list(keywords):
+        if 'function' in item.lower():
+            keywords.remove(item)
     return keywords
 
-def getArgsString(args, ignore_list=['recalculate', 'calculate_function']):
+def getArgsString(args, ignore_list=[]):
     """create standardized arg string based on feature args
     Args:
         args -- ordered dict of argname: argvalue pairs
@@ -157,7 +161,9 @@ def getArgsString(args, ignore_list=['recalculate', 'calculate_function']):
         if (ignore):
             continue
 
-        if isinstance(v, int):
+        if (callable(v) or 'function' in k.lower()):
+            args_string_list.append('function={!s}'.format(k))
+        elif isinstance(v, int):
             args_string_list.append('{!s}={:d}'.format(k, v))
         elif isinstance(v, float):
             args_string_list.append('{!s}={:0.2f}'.format(k, v))
@@ -191,19 +197,21 @@ def loadFeatures(pickle_path, image_volumes, feature_defs, roi=None, savepickle=
         modalities = list(image_volumes.keys())
 
         # load first file that matches the search and move to next modality
-        feature_volumes = {}
-        for feature_name, args in feature_defs.items():
-            calculate_feature = args.pop('calculate_function')
-            recalculate = args.pop('recalculate')
-            these_feature_volumes = {}  # k: mod, v: BaseVolume
-            logger.info(indent('Loading Feature ({!s}):'.format(feature_name), 0))
+        feature_volumes = OrderedDict()
+        for feature_def in feature_defs:
+            feature_label = feature_def.label
+            feature_args = feature_def.args
+            calculate_feature = feature_def.calculation_function
+            recalculate = feature_def.recalculate
+            these_feature_volumes = OrderedDict()  # k: mod, v: BaseVolume
+            logger.info(indent('Loading Feature ({!s}):'.format(feature_label), 0))
             for mod in modalities:
                 logger.info(indent('Loading {mod:s} feature:'.format(mod=mod.upper()), l1_indent))
                 # initialize to None
                 these_feature_volumes[mod] = None
 
                 # get files that match settings
-                keywords = getFeatureKeywords(feature_name, args)
+                keywords = getFeatureKeywords(feature_label, feature_args)
                 if (roi is not None):
                     keywords.append(roi.roiname)
                 keywords.append(mod)
@@ -224,7 +232,7 @@ def loadFeatures(pickle_path, image_volumes, feature_defs, roi=None, savepickle=
                         # old pickle definition doesnt contain mod and feature_label
                         # add and repickle
                         vol.mod = mod
-                        vol.feature_label = feature_name
+                        vol.feature_label = feature_label
                         logger.info(indent('outdated pickle found, updating in filesystem', l2_indent))
                         vol.toPickle(pickle_path)
                     except:
@@ -248,10 +256,10 @@ def loadFeatures(pickle_path, image_volumes, feature_defs, roi=None, savepickle=
                         logger.info(indent('No pickled feature vector found ({mod:s})'.format(mod=mod), l2_indent))
 
                     logger.info(indent('Computing feature now...'.format(mod=mod), l2_indent))
-                    vol = calculate_feature(image_volumes[mod], roi=roi, **args)
+                    vol = calculate_feature(image_volumes[mod], roi=roi, **feature_args)
                     # inject metadata
                     vol.modality = mod
-                    vol.feature_label = feature_name
+                    vol.feature_label = feature_label
 
                     these_feature_volumes[mod] = vol
 
@@ -262,19 +270,19 @@ def loadFeatures(pickle_path, image_volumes, feature_defs, roi=None, savepickle=
                     else:
                         logger.info(indent('feature computed successfully', l2_indent))
                         # pickle for later recall
-                        args_string = getArgsString(args)
+                        args_string = getArgsString(feature_args, ignore_list=['glcm_stat_function'])
                         if (roi is not None):
                             # append ROIName to pickle path
                             pickle_dump_path = os.path.join(pickle_path,
                                 'feature={featname!s}_{mod:s}_roi={roiname:s}_args({args!s}).pickle'.format(
-                                    featname=feature_name,
+                                    featname=feature_label,
                                     mod=mod,
                                     roiname=roi.roiname,
                                     args=args_string))
                         else:
                             # dont append roiname to pickle path
                             pickle_dump_path = os.path.join(pickle_path,
-                                'feature={featname!s}_{mod!s}_args({args!s}).pickle'.format(featname=feature_name,
+                                'feature={featname!s}_{mod!s}_args({args!s}).pickle'.format(featname=feature_label,
                                     mod=mod, args=args_string))
                         try:
                             these_feature_volumes[mod].toPickle(pickle_dump_path)
@@ -285,7 +293,7 @@ def loadFeatures(pickle_path, image_volumes, feature_defs, roi=None, savepickle=
                                          l2_indent))
                 logger.info('')
                 # END mod
-            feature_volumes[feature_name] = these_feature_volumes
+            feature_volumes[feature_label] = these_feature_volumes
             logger.info('')
             # END feature_def
 
