@@ -13,10 +13,6 @@ import pywt
 from utils.rttypes import BaseVolume, MaskableVolume, FrameOfReference
 from utils.misc import g_indents, indent, timer
 import time
-import pycuda.autoinit
-import pycuda.driver as cuda
-from pycuda.compiler import SourceModule
-pycuda.compiler.DEFAULT_NVCC_FLAGS = ['--std=c++11']
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -46,6 +42,31 @@ class LocalFeatureDefinition:
     def addArg(self, key, value):
         """abstracts away the complexities of initializing an ordereddict with lists of tuples..."""
         self.args[key] = value
+
+class LocalFeatureCollectionDefinition:
+    """Used to define a list of functions to be applied at each patch location within a full image iterator"""
+    def __init__(self, collection_label, recalculate=False, args=None):
+        """
+        Args:
+            collection_label -- string
+            calculation_function -- function pointer for patch based local feature calcuation matching
+                                    signature: calculation_function(ndArray)
+        Optional Args:
+            recalculate -- parsed arg or bool literal indicating if feature should be recalculated and pickled
+            args -- dict of arg key:value pairs where key exactly matches the kwarg key for calculation_function
+        """
+        self.collection_label = collection_label
+        self.recalculate = recalculate
+        self.args = OrderedDict()
+        self.callables = OrderedDict()
+
+    def addArg(self, key, value):
+        """abstracts away the complexities of initializing an ordereddict with lists of tuples..."""
+        self.args[key] = value
+    def addCallable(self, callable_label, callable):
+        """adds a patch level callable for processing"""
+        self.callables[callable_label] = callable_label
+
 
 class FeatureList():
     def __init__(self, feature_def_list=None):
@@ -86,9 +107,11 @@ def image_iterator(processing_function, image_volume, radius=2, roi=None):
     """compute the pixel-wise feature of an image over a region defined by neighborhood
 
     Args:
-        processing-function -- function that should be applied to at each voxel location with neighborhood
+        processing_function -- function that should be applied to at each voxel location with neighborhood
                                 context. Function signature should match:
                                     fxn()
+                            -- list<callables> that will all be evaluated at each patch location, results will
+                                be stored to separate result MaskableVolume objects
         image -- a flattened array of pixel intensities of type imslice or a matrix shaped numpy ndarray
         radius -- describes neighborood size in each dimension. radius of 4 would be a 9x9x9
     Returns:
@@ -182,6 +205,15 @@ def image_iterator(processing_function, image_volume, radius=2, roi=None):
                                                     (c_subset, r_subset, d_subset))
         feature_volume = feature_volume.fromArray(np.zeros((d_subset, r_subset, c_subset)), feature_frameofreference)
 
+    # # setup an output volume for each feature in processing_function list
+    # if (not isinstance(processing_function, list)):
+    #     tmp = []
+    #     tmp.append(processing_function)
+    #     processing_function = tmp
+    # feature_volumes = [feature_volume]
+    # for funct in processing_function[1:]:
+    #     feature_volumes.append(np.zeros_like(feature_volume))
+
     # nested loop approach -> slowest, try GPU next
     total_voxels = d * r * c
     subset_total_voxels = d_subset * r_subset * c_subset
@@ -226,6 +258,7 @@ def image_iterator(processing_function, image_volume, radius=2, roi=None):
                                 # store to local image patch
                                 patch_vals[p_z, p_y, p_x] = val
 
+                    # for i, funct in enumerate(processing_function):
                     proc_value = processing_function(patch_vals)
                     set_val(feature_volume, z_idx, y_idx, x_idx, proc_value)
 
@@ -246,87 +279,16 @@ def image_iterator(processing_function, image_volume, radius=2, roi=None):
     if isinstance(image_volume, np.ndarray) and d == 1:
         # need to reshape ndarray if input was 2d
         feature_volume = feature_volume.reshape((r_subset, c_subset))
+        # for i, feature_volume in enumerate(feature_volumes):
+        #     feature_volumes[i] = feature_volume.reshape((r_subset, c_subset))
 
 
     end_feature_calc = time.time()
     logger.debug(timer('feature calculation time:', end_feature_calc-start_feature_calc, l3))
+    # if len(features_volumes > 1):
+    #     return feature_volumes
+    # else:
     return feature_volume
-
-def image_entropy_gpu(image_vect, radius=2):
-    """Uses PyCuda to parallelize the computation of the voxel-wise image entropy using a variable neighborhood radius
-
-    Args:
-	radius -- neighborhood radius; where neighborhood size is isotropic and calculated as 2*radius+1
-    """
-    mod = SourceModule("""
-    __global__ void image_entropy2(
-        float *image_vect)
-    {
-        int radius = 4;
-        int z_radius = 0;
-        // array index for this thread
-        int idx = blockIdx.y * (blockDim.x * blockDim.y) * 32
-                + blockIdx.x * (blockDim.x * blockDim.y)
-                + threadIdx.y * (blockDim.x)
-                + threadIdx.x;
-        //image_vect[idx] = idx % 255;
-
-        for (int k_z = -z_radius; k_z <= z_radius; k_z++) {
-            for (int k_x = -radius; k_x <= radius; k_x++) {
-                for (int k_y = -radius; k_y <= radius; k_y++) {
-                    int k_idx = blockIdx.z * (threadIdx.z + k_z * blockDim.y * blockDim.x)
-                              + blockIdx.y * (threadIdx.y + k_y * blockDim.x)
-                              + blockIdx.x * (threadIdx.x + k_x);
-
-                    // Count unique pixel intensities
-                    //val = fmax(0, image_vect[k_idx])
-                    image_vect[idx] = idx % 255;
-                }
-            }
-        }
-
-
-    }
-    """)
-
-    func = mod.get_function('image_entropy2')
-
-    if isinstance(image_vect, np.ndarray):
-        if image_vect.ndim == 3:
-            d, r, c = image_vect.shape
-        elif image_vect.ndim == 2:
-            d, r, c = (1, *image_vect.shape)
-        image = image_vect.flatten()
-    elif isinstance(image_vect, BaseVolume):
-        d = image_vect.depth
-        r = image_vect.rows
-        c = image_vect.columns
-        image = image_vect.array
-
-    if d == 1:
-        z_radius = 0
-    elif d > 1:
-        z_radius = radius
-
-    # block, grid dimensions
-
-    # allocate image on device in global memory
-    image = image.astype(np.float32)
-    image_gpu = cuda.mem_alloc(image.nbytes)
-    result = np.empty_like(image)
-    result_gpu = cuda.mem_alloc(image.nbytes)
-    # transfer image to device
-    cuda.memcpy_htod(image_gpu, image)
-    cuda.memcpy_htod(result_gpu, result)
-    # call device kernel
-    func(image_gpu, block=(16,16,1), grid=(32,32,1))
-    # get result from device
-    cuda.memcpy_dtoh(result, image_gpu)
-
-    logger.info(type(result))
-    logger.info(result.shape)
-    logger.info('GPU done')
-    return result.reshape(r,c)
 
 
 def energy_plugin(patch_vals):
@@ -465,7 +427,7 @@ def quantize(image_patch, gray_levels=12, n_stddev=2):
     it = np.nditer(image_patch, op_flags=['readwrite'], flags=['multi_index'])
     while not it.finished:
         val = image_patch[it.multi_index]
-        quantized_image_patch[it.multi_index] = min(gray_levels-1, max(0, math.floor(((val - mean + n_stddev*stddev)/bin_width)+1)))
+        quantized_image_patch[it.multi_index] = min(gray_levels-1, max(0, math.floor(((val - mean + n_stddev*stddev)/(bin_width+1e-9))+1)))
         it.iternext()
 
     # import matplotlib.pyplot as plt
@@ -561,11 +523,10 @@ def glcm(image_volume, glcm_stat_function, radius=2, roi=None, gray_levels=12, n
         based on the distance and angle in radians
 
         Args:
-            patch_vals -- ndarray extracted for a neighborhood around a voxel in ImageIterator()
-            d<dir> -- distance of query in direction as signed integer
             gray_levels -- gray_levels are binned according to uniform thresholding within +- 2std-dev,
                            lowest and highest bins hold outliers and total bin count will be equal to requested
         """
+        # if glcm_stat_function contains a collection of processing functions, return a result list
         # ALL ARE PATCH OPERATIONS
         # quantize image patch
         # logger.debug('quantizing image patch of shape: ({!s})'.format(patch_vals.shape))
@@ -579,4 +540,3 @@ def glcm(image_volume, glcm_stat_function, radius=2, roi=None, gray_levels=12, n
 
     # build patch-eval function
     return image_iterator(glcm_eval, image_volume, radius, roi)
-

@@ -171,6 +171,62 @@ def getArgsString(args, ignore_list=[]):
             args_string_list.append('{!s}={!s}'.format(k, v))
     return ','.join(args_string_list)
 
+def checkPickle(root, mod, label, args, roi=None, all=False):
+    """finds matching pickle files at root and returns first or list of all matches"""
+    keywords = getFeatureKeywords(label, args)
+    if (roi):
+        keywords.append(roi.roiname)
+    keywords.append(mod)
+    matches = findFiles(root, type='.pickle', keywordlist=keywords)
+
+    if (matches is not None):
+        return matches[0]
+    else:
+        return None
+
+def loadPickle(path, mod=None, feature_label=None, nindent=l2_indent):
+    logger.info(indent('Pickled feature vector found ({!s}). Loading.'.format(mod), nindent))
+    try:
+        vol = MaskableVolume().fromPickle(path)
+    except rttypes.PickleOutdatedError:
+        # old pickle definition doesnt contain mod and feature_label add and repickle
+        if mod:
+            vol.mod = mod
+        if feature_label:
+            vol.feature_label = feature_label
+        logger.info(indent('outdated pickle found, updating in filesystem', nindent))
+        vol.toPickle(path)
+    except:
+        vol = None
+    finally:
+        if (vol):
+            logger.info(indent('Pickled {!s} feature vector loaded successfully.'.format(mod.upper()), nindent))
+            return vol
+        else:
+            logger.info(indent('there was a problem loading the file: {!s}'.format(path), nindent))
+            return None
+
+def savePickle(path, vol, mod, label, args, roi=None, nindent=l2_indent):
+    args_string = getArgsString(args, ignore_list=['glcm_stat_function'])
+    if (roi is not None):
+        roi_string = 'roi={!s}_'.format(roi.roiname)
+    else:
+        roi_string = ''
+
+    # append ROIName to pickle path
+    pickle_dump_path = os.path.join(path,
+            'feature={featname!s}_{mod:s}_{roistring:s}args({args!s}).pickle'.format(
+            featname=label,
+            mod=mod,
+            roistring=roi_string,
+            args=args_string))
+    try:
+        vol.toPickle(pickle_dump_path)
+    except:
+        logger.info(indent('error pickling: {:s}'.format(pickle_dump_path), nindent))
+    else:
+        logger.info(indent('feature pickled successfully to: {:s}'.format(pickle_dump_path), nindent))
+
 def loadFeatures(pickle_path, image_volumes, feature_defs, roi=None, savepickle=True):
     """Checks if feature vector has already been pickled at path specified and
     loads the files if so, or computes feature for each modality and pickles for later access.
@@ -203,57 +259,25 @@ def loadFeatures(pickle_path, image_volumes, feature_defs, roi=None, savepickle=
             feature_args = feature_def.args
             calculate_feature = feature_def.calculation_function
             recalculate = feature_def.recalculate
+
             these_feature_volumes = OrderedDict()  # k: mod, v: BaseVolume
-            logger.info(indent('Loading Feature ({!s}):'.format(feature_label), 0))
+            logger.info('Loading Feature ({!s}):'.format(feature_label))
             for mod in modalities:
-                logger.info(indent('Loading {mod:s} feature:'.format(mod=mod.upper()), l1_indent))
+                logger.info(indent('Loading {!s} feature:'.format(mod.upper()), l1_indent))
                 # initialize to None
                 these_feature_volumes[mod] = None
 
                 # get files that match settings
-                keywords = getFeatureKeywords(feature_label, feature_args)
-                if (roi is not None):
-                    keywords.append(roi.roiname)
-                keywords.append(mod)
-                matches = findFiles(pickle_path, type='.pickle', keywordlist=keywords)
-
-                if (matches is not None):
-                    match = matches[0]
-                else:
-                    match = None
+                match = checkPickle(pickle_path, mod, feature_label, feature_args, roi)
 
                 if (not recalculate and match is not None):
                     # found pickled feature vector, load it and add to dict - no need to calculate feature
-                    logger.info(indent('Pickled feature vector found ({mod:s}). Loading.'.format(mod=mod), l2_indent))
-                    try:
-                        path = os.path.join(pickle_path, match)
-                        vol = MaskableVolume().fromPickle(path)
-                    except rttypes.PickleOutdatedError:
-                        # old pickle definition doesnt contain mod and feature_label
-                        # add and repickle
-                        vol.mod = mod
-                        vol.feature_label = feature_label
-                        logger.info(indent('outdated pickle found, updating in filesystem', l2_indent))
-                        vol.toPickle(pickle_path)
-                    except:
-                        vol = None
-                    finally:
-                        if (vol):
-                            logger.info(indent('Pickled {mod:s} feature vector loaded successfully.'.format(
-                                mod=mod.upper()), l2_indent))
-                        else:
-                            logger.info(indent('there was a problem loading the file: {path:s}'.format(path=path),
-                                l2_indent))
-                        these_feature_volumes[mod] = vol
-                else:
-                    # Calculate feature this time
-                    if (match is not None):
-                        # force calculation of feature
+                    these_feature_volumes[mod] = loadPickle(os.path.join(pickle_path, match), mod, feature_label)
+                else:  # Calculate feature this time
+                    if (match):
                         logger.info(indent('Recalculating feature as requested', l2_indent))
                     else:
-                        # if no file is matched for that modality, calculate instead if image dicom files are
-                        # present for that modality
-                        logger.info(indent('No pickled feature vector found ({mod:s})'.format(mod=mod), l2_indent))
+                        logger.info(indent('No pickled feature vector found ({!s})'.format(mod), l2_indent))
 
                     logger.info(indent('Computing feature now...'.format(mod=mod), l2_indent))
                     vol = calculate_feature(image_volumes[mod], roi=roi, **feature_args)
@@ -265,32 +289,12 @@ def loadFeatures(pickle_path, image_volumes, feature_defs, roi=None, savepickle=
 
                     # Check status of calculation
                     if these_feature_volumes[mod] is None:
-                        logger.info(indent('Failed to compute feature for {mod:s} images.'.format(
-                            mod=mod.upper()), l2_indent))
+                        logger.info(indent('Failed to compute feature for {!s} images.'.format(mod.upper()), l2_indent))
                     else:
                         logger.info(indent('feature computed successfully', l2_indent))
                         # pickle for later recall
-                        args_string = getArgsString(feature_args, ignore_list=['glcm_stat_function'])
-                        if (roi is not None):
-                            # append ROIName to pickle path
-                            pickle_dump_path = os.path.join(pickle_path,
-                                'feature={featname!s}_{mod:s}_roi={roiname:s}_args({args!s}).pickle'.format(
-                                    featname=feature_label,
-                                    mod=mod,
-                                    roiname=roi.roiname,
-                                    args=args_string))
-                        else:
-                            # dont append roiname to pickle path
-                            pickle_dump_path = os.path.join(pickle_path,
-                                'feature={featname!s}_{mod!s}_args({args!s}).pickle'.format(featname=feature_label,
-                                    mod=mod, args=args_string))
-                        try:
-                            these_feature_volumes[mod].toPickle(pickle_dump_path)
-                        except:
-                            logger.info(indent('error pickling: {:s}'.format(pickle_dump_path), l2_indent))
-                        else:
-                            logger.info(indent('feature pickled successfully to: {:s}'.format(pickle_dump_path),
-                                         l2_indent))
+                        savePickle(pickle_path, these_feature_volumes[mod], mod, feature_label, feature_args, roi)
+
                 logger.info('')
                 # END mod
             feature_volumes[feature_label] = these_feature_volumes
