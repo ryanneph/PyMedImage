@@ -146,6 +146,13 @@ def getPatientPaths(root, includeignored=False, child_dirname='precomputed'):
     """
     # walk filesystem to find patient_dirs
     patient_dirs = []
+    # check if root dir is itself a patient
+    root = root.rstrip('/')
+    if (os.path.isdir(os.path.join(root, child_dirname))
+        and (includeignored or os.path.basename(root)[0] != '_')):
+        patient_dirs.append(root)
+        return patient_dirs
+
     for walkroot, dirs, files in os.walk(root, followlinks=True):
         # identify patient dirs by presence of 'precomputed' directory one level deep
         if (os.path.isdir(os.path.join(walkroot, child_dirname))
