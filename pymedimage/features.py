@@ -325,7 +325,7 @@ def entropy_plugin(patch_vals):
     for i, val in enumerate(val_counts.keys()):
         val_probs[i] = val_counts[val]/total_counts
     # calculate local entropy
-    h = -np.sum(val_probs*np.log(val_probs)) #/ np.log(65536)
+    h = -np.sum(val_probs*np.log(val_probs))
 
     return h
 

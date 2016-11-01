@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 
-def glcm_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, dy=0, dz=0, ndev=2,
-             stat_name='glcm_stat_contrast_gpu'):
+def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, dy=0, dz=0, ndev=2,
+             feature_kernel='glcm_plugin_gpu', stat_name='glcm_stat_contrast_gpu'):
     """Uses PyCuda to parallelize the computation of the voxel-wise image entropy using a variable \
             neighborhood radius
 
@@ -24,7 +24,7 @@ def glcm_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, dy=0, dz=0,
     cuda_template = Template("""
     #define RADIUS $RADIUS
     #define Z_RADIUS $Z_RADIUS
-    #define PATCH_NVALS (RADIUS*2+1)*(RADIUS*2+1)*(Z_RADIUS*2+1)
+    #define PATCH_SIZE (RADIUS*2+1)*(RADIUS*2+1)*(Z_RADIUS*2+1)
     #define IMAGE_WIDTH $IMAGE_WIDTH
     #define IMAGE_HEIGHT $IMAGE_HEIGHT
     #define IMAGE_DEPTH $IMAGE_DEPTH
@@ -39,41 +39,98 @@ def glcm_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, dy=0, dz=0,
     #include "math.h"
     #include <stdio.h>
 
-    __device__ float rn_mean(float *array, int n) {
+    /* UTILITIES */
+    __device__ float rn_mean(float *array) {
+        // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
+        int size = PATCH_SIZE;
+
         // computes the mean of the array
         int total = 0;
-        for (int i=0; i<n; i++) {
+        for (int i=0; i<size; i++) {
             total += array[i];
         }
-        return (float)total / n;
+        return ((float)total / size);
     }
-    __device__ float rn_std(float *array, int n) {
+    __device__ float rn_std(float *array) {
+        // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
+        int size = PATCH_SIZE;
+
         // get the mean
-        float mu = rn_mean(array, n);
+        float mu = rn_mean(array);
 
         // compute the std. deviation
         int total = 0;
-        for (int i=0; i<n; i++) {
+        for (int i=0; i<size; i++) {
             total += powf( array[i] - mu, 2);
         }
-        return sqrtf((float)total / n);
+        return sqrtf((float)total / size);
     }
-    __device__ void quantize_gpu(float *array, int n) {
+    __device__ void quantize_gpu(float *array) {
         // quantize the array into nbins, placing lower 2.5% and upper 2.5% residuals of gaussian
         // distribution into first and last bins respectively
 
         // gaussian stats
-        float f_mean = rn_mean(array, n);
-        float f_std = rn_std(array, n);
+        float f_mean = rn_mean(array);
+        float f_std = rn_std(array);
         float f_binwidth = 2*NDEV*f_std / (NBINS-2);
         //printf("mean:%f std:%f width:%f\\n", f_mean, f_std, f_binwidth);
 
         // rebin values
-        for (int i=0; i<n; i++) {
+        for (int i=0; i<PATCH_SIZE; i++) {
             array[i] = fminf(NBINS-1, fmaxf(0, floorf(((array[i] - f_mean + NDEV*f_std)/(f_binwidth+1e-9)) + 1)));
         }
     }
-    __device__ void glcm_matrix_gpu(int *mat, float *array, int n) {
+
+    /* ENTROPY ENERGY */
+    __device__ float entropy_plugin_gpu(float *patch_array) {
+        // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
+        int size = PATCH_SIZE;
+
+        quantize_gpu(patch_array);
+
+        // count intensity occurences
+        int hist[NBINS];
+        for (int i=0; i<NBINS; i++) {
+            hist[i] = 0;
+        }
+        for (int i=0; i<size; i++) {
+            hist[(int)floorf(patch_array[i])]++;
+        }
+
+        // calculate local entropy
+        float stat = 0.0;
+        for (int i=0; i<NBINS; i++) {
+            stat -= ((float)hist[i]/size) * (logf(((float)hist[i]/size) + 1e-9));
+        }
+
+        return stat;
+    }
+    __device__ float energy_plugin_gpu(float *patch_array) {
+        // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
+        int size = PATCH_SIZE;
+
+        quantize_gpu(patch_array);
+
+        // count intensity occurences
+        int hist[NBINS];
+        for (int i=0; i<NBINS; i++) {
+            hist[i] = 0;
+        }
+        for (int i=0; i<size; i++) {
+            hist[(int)floorf(patch_array[i])] += 1;
+        }
+
+        // calculate local energy
+        float stat = 0.0;
+        for (int i=0; i<NBINS; i++) {
+            stat += powf((float)hist[i]/size, 2);
+        }
+
+        return sqrtf(stat);
+    }
+
+    /* GLCM FEATURES */
+    __device__ void glcm_matrix_gpu(int *mat, float *array) {
         // compute glcm matrix in the specified directions
         int dx = 1;
         int dy = 0;
@@ -81,12 +138,12 @@ def glcm_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, dy=0, dz=0,
 
         int patch_size_1d = (RADIUS*2+1);
         int patch_size_2d = pow(patch_size_1d, 2);
-        for (int i=0; i<n; i++) {
+        for (int i=0; i<PATCH_SIZE; i++) {
             int z = i / patch_size_2d;
             int y = (i - patch_size_2d*z) / patch_size_1d;
             int x = i - patch_size_2d*z - patch_size_1d*y;
             int y_idx = array[i];
-            int x_idx_query = (int)fmaxf(0,fminf(n-1, (z+dz)*patch_size_2d + (y+dy)*patch_size_1d + (x + dx)));
+            int x_idx_query = (int)fmaxf(0,fminf(PATCH_SIZE-1, (z+dz)*patch_size_2d + (y+dy)*patch_size_1d + (x + dx)));
             int x_idx = (int)(array[x_idx_query]);
 
             // Logging
@@ -163,16 +220,16 @@ def glcm_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, dy=0, dz=0,
         }
         return accum;
     }
-    __device__ float glcm_plugin_gpu(float *patch_array, int n) {
+    __device__ float glcm_plugin_gpu(float *patch_array) {
         // quantize patch
-        quantize_gpu(patch_array, n);
+        quantize_gpu(patch_array);
 
         // compute glcm matrix
         int mat[GLCM_SIZE];
         for (int i=0; i<GLCM_SIZE; i++) {
             mat[i] = 0;
         }
-        glcm_matrix_gpu(mat, patch_array, n);
+        glcm_matrix_gpu(mat, patch_array);
 
         // compute matrix statistic
         float stat = ${STAT}(mat);
@@ -180,13 +237,12 @@ def glcm_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, dy=0, dz=0,
         return stat;
     }
 
-    __global__ void image_iterator_gpu(float *image_vect, float *result_vect)
-    {
+    __global__ void image_iterator_gpu(float *image_vect, float *result_vect) {
         // array index for this thread
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
         if (idx < IMAGE_SIZE) {
-            float patch_array[PATCH_NVALS];
+            float patch_array[PATCH_SIZE];
             int i = 0;
             for (int k_z = -Z_RADIUS; k_z <= Z_RADIUS; k_z++) {
                 for (int k_y = -RADIUS; k_y <= RADIUS; k_y++) {
@@ -203,19 +259,19 @@ def glcm_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, dy=0, dz=0,
                 }
             }
             //result_vect[idx] = image_vect[idx];
-            result_vect[idx] = glcm_plugin_gpu(patch_array, PATCH_NVALS);
+            result_vect[idx] = ${KERNEL}(patch_array);
         }
     }
     """)
 
     if isinstance(image_volume, np.ndarray):
+        toBaseVolume = False
         logger.debug('recognized as an np.ndarray')
         if image_volume.ndim == 3:
             d, r, c = image_volume.shape
         elif image_volume.ndim == 2:
             d, r, c = (1, *image_volume.shape)
         image = image_volume.flatten()
-    #elif isinstance(image_volume, BaseVolume):
     else:
         toBaseVolume = True
         logger.debug('recognized as a BaseVolume')
@@ -238,6 +294,7 @@ def glcm_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, dy=0, dz=0,
                                             'DY': dy,
                                             'DZ': dz,
                                             'NDEV': ndev,
+                                            'KERNEL': feature_kernel,
                                             'STAT': stat_name})
     mod2 = SourceModule(cuda_source)
     func = mod2.get_function('image_iterator_gpu')
@@ -259,6 +316,7 @@ def glcm_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, dy=0, dz=0,
 
     logger.debug('feature result shape: {!s}'.format(result.shape))
     logger.debug('GPU done')
+    # convert to int representation
     if d == 1:
         result = result.reshape(r, c)
     elif d>1:

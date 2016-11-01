@@ -140,7 +140,7 @@ def getFeatureKeywords(feature_name, args):
                ['{argname!s}={argval!s}'.format(argname=n, argval=v)
                 for (n, v) in args.items()]
     for item in list(keywords):
-        if 'function' in item.lower():
+        if ('function' in item.lower() or 'kernel' in item.lower()):
             keywords.remove(item)
     return keywords
 
@@ -163,6 +163,8 @@ def getArgsString(args, ignore_list=[]):
 
         if (callable(v) or 'function' in k.lower()):
             args_string_list.append('function={!s}'.format(k))
+        elif ('kernel' in k.lower()):
+            continue
         elif isinstance(v, int):
             args_string_list.append('{!s}={:d}'.format(k, v))
         elif isinstance(v, float):
