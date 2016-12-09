@@ -62,7 +62,7 @@ def indent(message, indent=0):
     message = message.replace('\n', '\n' + indent_string)
     return '{indent_string:s}{message:s}'.format(indent_string=indent_string, message=message)
 
-def findFiles(root, type=None, keywordlist=None, casesensitive=False, recursive=False):
+def findFiles(root, ext=None, keywordlist=None, casesensitive=False, recursive=False):
     """returns a list of full file paths beneath root if each path contains all of the strings in keywordlist
     and is of the type (ext) specified
 
@@ -70,7 +70,7 @@ def findFiles(root, type=None, keywordlist=None, casesensitive=False, recursive=
         root          -- path within which to check files
 
     Optional Args:
-        type          -- file extension to verify (with or without dot is okay)
+        ext          -- file extension to verify (with or without dot is okay)
         keywordlist   -- list of words which must all be present as substrings in filename
         casesensitive -- check character case?
         recursive     -- walk into subdirectories
@@ -80,7 +80,7 @@ def findFiles(root, type=None, keywordlist=None, casesensitive=False, recursive=
         f
         for f in os.listdir(root)
         if os.path.isfile(os.path.join(root, f))
-        and (type.replace('.', '') == os.path.splitext(f)[1].replace('.', '') if type is not None else True)
+        and (ext.replace('.', '') == os.path.splitext(f)[1].replace('.', '') if ext is not None else True)
     ]
 
     matches = []
@@ -124,13 +124,15 @@ def generate_heatmap_label(volume):
     if (feature_label):
         label = '{feat!s}({mod!s})'.format(feat = feature_label.title(),
                                            mod  = mod)
-    else:
+    elif mod:
         if ('ct' in mod.lower()):
             label = 'CT #'
         elif ('pet' in mod.lower() or 'pt' in mod.lower()):
             label = 'PET SUV'
         else:
             label = mod.upper()
+    else:
+        label = 'Unknown'
 
     return label
 

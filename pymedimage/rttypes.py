@@ -311,6 +311,16 @@ class ROI:
         frameofreference = FrameOfReference(start, spacing, size, UID=None)
         return frameofreference
 
+    def toPickle(self, pickle_path):
+        """convenience function for storing ROI to pickle file"""
+        with open(pickle_path, 'wb') as p:
+            pickle.dump(self, p)
+
+    @staticmethod
+    def fromPickle(pickle_path):
+        """convenience function for restoring ROI from pickle file"""
+        with open(pickle_path, 'rb') as p:
+            return pickle.load(p)
 
 class BaseVolume:
     """Defines basic storage for volumetric voxel intensities within a dicom FrameOfReference
@@ -456,6 +466,8 @@ class BaseVolume:
         if (frameofreference is None):
             logger.exception('no FrameOfReference provided')
             raise ValueError
+        elif (ROI.__name__ in (str(type(frameofreference)))):
+            frameofreference = frameofreference.frameofreference
         elif (FrameOfReference.__name__ not in str(type(frameofreference))):  # This is an ugly way of type-checking but cant get isinstance to see both as the same
             logger.exception(('supplied frameofreference of type: "{:s}" must be of the type: "FrameOfReference"'.format(
                 str(type(frameofreference)))))
@@ -620,6 +632,17 @@ class MaskableVolume(BaseVolume):
         return maskable
 
     # CONSTRUCTOR METHODS
+    def deepCopy(self):
+        """makes deep copy of self and returns the copy"""
+        copy_vol = MaskableVolume()
+        copy_vol.array = copy.deepcopy(self.array)
+        copy_vol.frameofreference = copy.deepcopy(self.frameofreference)
+        copy_vol.rescaleparams = copy.deepcopy(self.rescaleparams)
+        copy_vol.modality = self.modality
+        copy_vol.feature_label = self.feature_label
+        return copy_vol
+
+
     def fromBaseVolume(self, base):
         """promotion constructor that converts baseVolume to MaskableVolume, retaining member variables
 
@@ -681,6 +704,17 @@ class MaskableVolume(BaseVolume):
             array = np.multiply(array, maskarray)
 
         return array
+
+    def applyMask(self, roi):
+        """Applies roi mask to entire array and stores in self
+
+        Args:
+            roi -- ROI object that supplies the mask definition
+        """
+        volume_copy = self.deepCopy()
+        masked_array = self.vectorize(roi).reshape(self.frameofreference.size[::-1])
+        volume_copy.array = masked_array
+        return volume_copy
 
 
 class PickleOutdatedError(Exception):

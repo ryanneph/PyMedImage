@@ -1,16 +1,68 @@
+import os
 from string import Template
 import logging
 import math
 import numpy as np
 from utils.rttypes import MaskableVolume
-import pycuda.autoinit
+import gc
+import pycuda
+import pycuda.tools
 import pycuda.driver as cuda
 from pycuda.compiler import SourceModule
 pycuda.compiler.DEFAULT_NVCC_FLAGS = ['--std=c++11']
 
+import matplotlib.pyplot as plt
+
 # initialize module logger
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
+
+def elementwiseMean_gpu(feature_volume_list):
+    """computes the elementwise mean of the like-shaped volumes in feature_volume_list"""
+    # initialize cuda context
+    cuda.init()
+    cudacontext = cuda.Device(0).make_context()
+
+    parent_dir = os.path.dirname(os.path.realpath(__file__))
+    with open(os.path.join(parent_dir, 'feature_compositions.cu'), mode='r') as f:
+        mod = SourceModule(f.read(), cache_dir=False,
+                           options=['-I {!s}'.format(parent_dir),
+                                    # '-g', '-G', '-lineinfo'
+                                    ])
+    func = mod.get_function('elementwiseMean')
+
+    # combine volumes into linearized array
+    FOR = feature_volume_list[0].frameofreference
+    vols = []
+    for vol in feature_volume_list:
+        vols.append(vol.vectorize())
+    array_length = np.product(FOR.size).item()
+    num_arrays = len(vols)
+    cat = np.concatenate(vols, axis=0)
+
+    # allocate image on device in global memory
+    cat = cat.astype(np.float32)
+    cat_gpu = cuda.mem_alloc(cat.nbytes)
+    result = np.zeros((array_length)).astype(np.float32)
+    result_gpu = cuda.mem_alloc(result.nbytes)
+    # transfer cat to device
+    cuda.memcpy_htod(cat_gpu, cat)
+    cuda.memcpy_htod(result_gpu, result)
+    # call device kernel
+    blocksize = 512
+    gridsize = math.ceil(array_length/blocksize)
+    func(cat_gpu, result_gpu, np.int32(array_length), np.int32(num_arrays), block=(blocksize, 1,1), grid=(gridsize, 1,1))
+    # get result from device
+    cuda.memcpy_dtoh(result, result_gpu)
+
+    # detach from cuda context
+    cudacontext.pop()
+    # required to successfully free device memory for created context
+    del cudacontext
+    gc.collect()
+
+    x = MaskableVolume().fromArray(result, FOR)
+    return x
 
 
 def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, dy=0, dz=0, ndev=2,
@@ -21,6 +73,10 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, d
     Args:
 	radius -- neighborhood radius; where neighborhood size is isotropic and calculated as 2*radius+1
     """
+    # initialize cuda context
+    cuda.init()
+    cudacontext = cuda.Device(0).make_context()
+
     cuda_template = Template("""
     #define RADIUS $RADIUS
     #define Z_RADIUS $Z_RADIUS
@@ -39,6 +95,11 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, d
     #include "math.h"
     #include <stdio.h>
 
+
+    /* FORWARD DECLARATIONS */
+    __device__ float mean_plugin_gpu(float *array);
+    __device__ float stddev_plugin_gpu(float *array, int dof=1);
+
     /* UTILITIES */
     __device__ float rn_mean(float *array) {
         // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
@@ -51,27 +112,13 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, d
         }
         return ((float)total / size);
     }
-    __device__ float rn_std(float *array) {
-        // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
-        int size = PATCH_SIZE;
-
-        // get the mean
-        float mu = rn_mean(array);
-
-        // compute the std. deviation
-        int total = 0;
-        for (int i=0; i<size; i++) {
-            total += powf( array[i] - mu, 2);
-        }
-        return sqrtf((float)total / size);
-    }
     __device__ void quantize_gpu(float *array) {
         // quantize the array into nbins, placing lower 2.5% and upper 2.5% residuals of gaussian
         // distribution into first and last bins respectively
 
         // gaussian stats
-        float f_mean = rn_mean(array);
-        float f_std = rn_std(array);
+        float f_mean = mean_plugin_gpu(array);
+        float f_std = stddev_plugin_gpu(array, 1);
         float f_binwidth = 2*NDEV*f_std / (NBINS-2);
         //printf("mean:%f std:%f width:%f\\n", f_mean, f_std, f_binwidth);
 
@@ -81,7 +128,7 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, d
         }
     }
 
-    /* ENTROPY ENERGY */
+    /* FIRST ORDER STATISTICS */
     __device__ float entropy_plugin_gpu(float *patch_array) {
         // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
         int size = PATCH_SIZE;
@@ -98,14 +145,13 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, d
         }
 
         // calculate local entropy
-        float stat = 0.0;
+        float stat = 0.0f;
         for (int i=0; i<NBINS; i++) {
             stat -= ((float)hist[i]/size) * (logf(((float)hist[i]/size) + 1e-9));
         }
-
         return stat;
     }
-    __device__ float energy_plugin_gpu(float *patch_array) {
+    __device__ float uniformity_plugin_gpu(float *patch_array) {
         // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
         int size = PATCH_SIZE;
 
@@ -120,7 +166,7 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, d
             hist[(int)floorf(patch_array[i])] += 1;
         }
 
-        // calculate local energy
+        // calculate local uniformity
         float stat = 0.0;
         for (int i=0; i<NBINS; i++) {
             stat += powf((float)hist[i]/size, 2);
@@ -128,13 +174,118 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, d
 
         return sqrtf(stat);
     }
+    __device__ float energy_plugin_gpu(float *patch_array) {
+        // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
+        int size = PATCH_SIZE;
+
+        // calculate local energy
+        float stat = 0.0f;
+        for (int i=0; i<size; i++) {
+            stat += powf((float)patch_array[i]/size, 2);
+        }
+        return stat;
+    }
+    __device__ float mean_plugin_gpu(float *patch_array) {
+        int size = PATCH_SIZE;
+
+        float stat = 0.0f;
+        for (int i=0; i<size; i++) {
+            stat += patch_array[i];
+        }
+        return (stat/size);
+    }
+    __device__ float min_plugin_gpu(float *patch_array) {
+        int size = PATCH_SIZE;
+
+        float stat = patch_array[0];
+        for (int i=1; i<size; i++) {
+            stat = fminf(stat, patch_array[i]) ;
+        }
+        return stat;
+    }
+    __device__ float max_plugin_gpu(float *patch_array) {
+        int size = PATCH_SIZE;
+
+        float stat = patch_array[0];
+        for (int i=1; i<size; i++) {
+            stat = fmaxf(stat, patch_array[i]) ;
+        }
+        return stat;
+    }
+    __device__ float kurtosis_plugin_gpu(float *patch_array) {
+        int size = PATCH_SIZE;
+
+        // get the mean
+        float mu = mean_plugin_gpu(patch_array);
+        float stddev = stddev_plugin_gpu(patch_array, 0);
+
+        // compute the kurtosis
+        float num = 0.0f;
+        for (int i=0; i<size; i++) {
+            num += powf(patch_array[i] - mu, 4);
+        }
+        return ((1.0f/size)*num) / (powf(stddev, 2));
+    }
+    __device__ float skewness_plugin_gpu(float *patch_array) {
+        int size = PATCH_SIZE;
+
+        // get the mean
+        float mu = mean_plugin_gpu(patch_array);
+        float stddev = stddev_plugin_gpu(patch_array, 0);
+
+        // compute the kurtosis
+        float num = 0.0f;
+        for (int i=0; i<size; i++) {
+            num += powf( patch_array[i] - mu, 3);
+        }
+        return ((1.0f/size)*num) / (powf(stddev, 3));
+    }
+    __device__ float rms_plugin_gpu(float *patch_array) {
+        int size = PATCH_SIZE;
+
+        float stat = 0.0f;
+        for (int i=0; i<size; i++) {
+            stat += powf(patch_array[i], 2);
+        }
+        return sqrtf(stat/size);
+    }
+    __device__ float variance_plugin_gpu(float *array, int dof=1) {
+        // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
+        int size = PATCH_SIZE;
+
+        // get the mean
+        float mu = mean_plugin_gpu(array);
+
+        // compute the std. deviation
+        float stat = 0.0f;
+        for (int i=0; i<size; i++) {
+            stat += powf( array[i] - mu, 2);
+        }
+        return (stat / (size-dof));
+    }
+    __device__ float stddev_plugin_gpu(float *array, int dof) {
+        return sqrtf(variance_plugin_gpu(array, dof));
+    }
+    __device__ float range_plugin_gpu(float *array) {
+        return (max_plugin_gpu(array) - min_plugin_gpu(array));
+    }
+    __device__ float meanabsdev_plugin_gpu(float *patch_array) {
+        int size = PATCH_SIZE;
+        float mu = mean_plugin_gpu(patch_array);
+
+        float stat = 0.0f;
+        for (int i=0; i<size; i++) {
+            stat += fabsf(patch_array[i] - mu);
+        }
+        return sqrtf(stat/size);
+    }
 
     /* GLCM FEATURES */
     __device__ void glcm_matrix_gpu(int *mat, float *array) {
         // compute glcm matrix in the specified directions
-        int dx = 1;
-        int dy = 0;
-        int dz = 0;
+        int dx = DX;
+        int dy = DY;
+        int dz = DZ;
 
         int patch_size_1d = (RADIUS*2+1);
         int patch_size_2d = pow(patch_size_1d, 2);
@@ -272,11 +423,18 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, d
         elif image_volume.ndim == 2:
             d, r, c = (1, *image_volume.shape)
         image = image_volume.flatten()
+
+        roimask = None
+
     else:
         toBaseVolume = True
         logger.debug('recognized as a BaseVolume')
-        image = image_volume.conformTo(roi.frameofreference).vectorize(roi)
+        image = image_volume.conformTo(roi.frameofreference).vectorize()
         d, r, c = roi.frameofreference.size[::-1]
+
+        # mask to roi
+        if (roi):
+            roimask = roi.makeDenseMask().vectorize()
 
     logger.debug('d:{:d}, r:{:d}, c:{:d}'.format(d, r, c))
     if d == 1:
@@ -296,7 +454,7 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, d
                                             'NDEV': ndev,
                                             'KERNEL': feature_kernel,
                                             'STAT': stat_name})
-    mod2 = SourceModule(cuda_source)
+    mod2 = SourceModule(cuda_source, cache_dir=False)
     func = mod2.get_function('image_iterator_gpu')
 
     # allocate image on device in global memory
@@ -314,9 +472,20 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, d
     # get result from device
     cuda.memcpy_dtoh(result, result_gpu)
 
+    # detach from cuda context
+    # cudacontext.detach()
+    cudacontext.pop()
+    # required to successfully free device memory for created context
+    del cudacontext
+    gc.collect()
+    # pycuda.tools.clear_context_caches()
+
     logger.debug('feature result shape: {!s}'.format(result.shape))
     logger.debug('GPU done')
-    # convert to int representation
+
+    if (roimask is not None):
+        result = np.multiply(result, roimask)
+
     if d == 1:
         result = result.reshape(r, c)
     elif d>1:

@@ -22,14 +22,12 @@ def write_dicom(path, dataset):
         path += '.dcm'
     dicom.write_file(path, dataset)
 
-
 def read_dicom(path):
     """read a dicom slice using pydicom and return the dataset object"""
-    ds = None
-    if (os.path.exists(path)):
-        ds = dicom.read_file(path)
+    if (not os.path.exists(path)):
+        raise FileNotFoundError('file at {!s} does not exist'.format(path))
+    ds = dicom.read_file(path)
     return ds
-
 
 def read_dicom_dir(path, recursive=False, verbosity=0):
     """read all dicom files in directory and return a list of the dataset objects.
@@ -46,7 +44,7 @@ def read_dicom_dir(path, recursive=False, verbosity=0):
     else:
         l1_indent = g_indents[2]
         l2_indent = g_indents[3]
-        printstring = Template('Reading dicoms in specified path$extra:\n"{:s}"')
+        printstring = Template('Reading dicoms in specified path${extra}:\n"{:s}"')
         extra = ''
         if recursive:
             extra = ' and subdirs'
@@ -82,3 +80,50 @@ def read_dicom_dir(path, recursive=False, verbosity=0):
         else:
             return None
 
+def probeDicomProperties(root, prop_label_list, recursive=True, silent=False):
+    """probe all dicoms in root for unique values of the properties defined in prop_label_list
+
+    Returns:
+        dict<k: prop_label, v: set()>: a set for each property is accumulated showing the unique values
+            encountered across the entire dataset within root
+    """
+    sets = {}
+    for l in prop_label_list:
+        sets[l] = set()
+
+    dcm_counter = 0
+    for r, dirs, files in os.walk(root, topdown=True):
+        # build the list of valid dicom file paths then load them after walk
+        for file in files:
+            _, file_extension = os.path.splitext(file)
+            if file_extension in ['.dcm', '.dicom']:
+                try:
+                    ds = read_dicom(os.path.join(r, file))
+                    dcm_counter += 1
+
+                    for l, s in sets.items():
+                        #print(l)
+                        val = ds.get(l)
+                        if isinstance(val, dicom.multival.MultiValue):
+                            val = tuple(val)
+                        #print(type(val))
+                        s.add(val)
+                except:
+                    continue
+
+        if (not recursive):
+            # clear dirs so that walk stops after this level
+            del dirs[:]
+
+    if not silent:
+        print('Finished probing {:d} dicom files.'.format(dcm_counter))
+        print('')
+        print('Probe Results:')
+        print('--------------')
+        for l, s in sets.items():
+            print('| SET: {!s}'.format(l))
+            for idx, item in enumerate(s):
+                print('|   {!s}.  {!s}'.format(idx+1, item))
+        print('--------------')
+
+    return sets

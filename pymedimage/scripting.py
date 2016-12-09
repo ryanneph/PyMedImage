@@ -81,15 +81,19 @@ def loadROIs(rtstruct_path):
 
     logger.info(indent('Importing ROIs', l1_indent))
 
-    # search recursively for a valid rtstruct file
-    ds_list = dcmio.read_dicom_dir(rtstruct_path, recursive=True)
-    if (ds_list is None or len(ds_list) == 0):
-        logger.info('no rtstruct datasets found at "{:s}"'.format(rtstruct_path))
-        raise Exception
+    # check if path is file or dir
+    if (os.path.isdir(rtstruct_path)):
+        # search recursively for a valid rtstruct file
+        ds_list = dcmio.read_dicom_dir(rtstruct_path, recursive=True)
+        if (ds_list is None or len(ds_list) == 0):
+            logger.info('no rtstruct datasets found at "{:s}"'.format(rtstruct_path))
+            raise Exception
+        ds = ds_list[0]
+    elif (os.path.isfile(rtstruct_path)):
+        ds = dcmio.read_dicom(rtstruct_path)
 
     # parse rtstruct file and instantiate maskvolume for each contour located
     # add each maskvolume to dict with key set to contour name and number?
-    ds = ds_list[0]
     if (ds is not None):
         # get structuresetROI sequence
         StructureSetROI_list = ds.StructureSetROISequence
@@ -128,6 +132,7 @@ def loadROIs(rtstruct_path):
 
 def getFeatureKeywords(feature_name, args):
     """generates keywords list for finding a pickled feature file using findFiles()
+    DEPRECATED IN FAVOR OF CLASS METHOD: WritableFeatureDefinition.getKeywords()
 
     Args:
         feature_name -- string defining feature
@@ -146,6 +151,8 @@ def getFeatureKeywords(feature_name, args):
 
 def getArgsString(args, ignore_list=[]):
     """create standardized arg string based on feature args
+    DEPRECATED IN FAVOR OF CLASS METHOD: WritableFeatureDefinition.getArgsString()
+
     Args:
         args -- ordered dict of argname: argvalue pairs
     Returns:
@@ -173,13 +180,14 @@ def getArgsString(args, ignore_list=[]):
             args_string_list.append('{!s}={!s}'.format(k, v))
     return ','.join(args_string_list)
 
-def checkPickle(root, mod, label, args, roi=None, all=False):
+def checkPickle(root, label, args, mod=None, roi=None, all=False):
     """finds matching pickle files at root and returns first or list of all matches"""
     keywords = getFeatureKeywords(label, args)
     if (roi):
         keywords.append(roi.roiname)
-    keywords.append(mod)
-    matches = findFiles(root, type='.pickle', keywordlist=keywords)
+    if mod:
+        keywords.append(mod)
+    matches = findFiles(root, ext='.pickle', keywordlist=keywords)
 
     if (matches is not None):
         return matches[0]
@@ -202,7 +210,7 @@ def loadPickle(path, mod=None, feature_label=None, nindent=l2_indent):
         vol = None
     finally:
         if (vol):
-            logger.info(indent('Pickled {!s} feature vector loaded successfully.'.format(mod.upper()), nindent))
+            logger.info(indent('Pickled feature vector loaded successfully.', nindent))
             return vol
         else:
             logger.info(indent('there was a problem loading the file: {!s}'.format(path), nindent))
@@ -270,7 +278,7 @@ def loadFeatures(pickle_path, image_volumes, feature_defs, roi=None, savepickle=
                 these_feature_volumes[mod] = None
 
                 # get files that match settings
-                match = checkPickle(pickle_path, mod, feature_label, feature_args, roi)
+                match = checkPickle(pickle_path, feature_label, feature_args, mod, roi)
 
                 if (not recalculate and match is not None):
                     # found pickled feature vector, load it and add to dict - no need to calculate feature
@@ -356,7 +364,7 @@ def loadClusters(clusters_pickle_path, feature_volumes_list, nclusters, radius, 
         if (roi is not None):
             keywords.append(roi.roiname)
         keywords = keywords + list(modalities)
-        matches = findFiles(clusters_pickle_path, type='.pickle', keywordlist=keywords)
+        matches = findFiles(clusters_pickle_path, ext='.pickle', keywordlist=keywords)
         if (matches is not None):
             match = matches[0]
         else:

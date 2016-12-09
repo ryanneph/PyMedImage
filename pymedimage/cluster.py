@@ -171,7 +171,7 @@ def create_feature_matrix(feature_volumes, roi=None):
         return (pruned_feature_array, frameofreference, dense_feature_array, feature_column_labels)
 
 
-def cluster_kmeans(feature_matrix, nclusters=10, eps=1e-4):
+def cluster_kmeans(feature_matrix, nclusters=10, eps=1e-4, njobs=-3):
     """take input feature array of N rows and D columns and perform standard kmeans clustering using \
             sklearn kmeans library
 
@@ -205,7 +205,7 @@ def cluster_kmeans(feature_matrix, nclusters=10, eps=1e-4):
                 init='k-means++',
                 precompute_distances=True,
                 tol=eps,
-                n_jobs=-3
+                n_jobs=njobs
                 )
     km.fit(normalized_feature_matrix)
     logger.info(indent('#iters: {:d}'.format(km.n_iter_), g_indents[1]))
