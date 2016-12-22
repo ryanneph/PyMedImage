@@ -3,12 +3,11 @@
 functions and classes for working with image registation
 """
 import logging
-from utils.rttypes import MaskableVolume
+from .rttypes import MaskableVolume
 import SimpleITK as sitk
 
 # initialize module logger
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
 
 def register_MultiModality(ref, volume_list):
     """performs registration between ref MaskableVolume and each MaskableVolume in volume_list

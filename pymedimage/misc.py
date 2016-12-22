@@ -9,7 +9,6 @@ import logging
 
 # initialize module logger
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
 
 from itertools import zip_longest
 def grouper(n, iterable, fillvalue=None):
@@ -65,6 +64,7 @@ def indent(message, indent=0):
 def findFiles(root, ext=None, keywordlist=None, casesensitive=False, recursive=False):
     """returns a list of full file paths beneath root if each path contains all of the strings in keywordlist
     and is of the type (ext) specified
+    FUNCTIONALITY DUPLICATED IN FEATURES.WRITABLEFEATUREDEFINITION MEMBER METHOD - POTENTIAL DEPRECATION
 
     Args:
         root          -- path within which to check files

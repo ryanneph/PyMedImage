@@ -11,11 +11,10 @@ import pickle
 import copy
 from PIL import Image, ImageDraw
 from scipy.ndimage import interpolation
-from utils import dcmio, misc
+from . import dcmio, misc
 
 # initialize module logger
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
 
 class RescaleParams:
     """Defines the scale and offset necessary for linear rescaling operation of dicom data

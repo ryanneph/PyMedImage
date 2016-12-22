@@ -9,5 +9,3 @@ constants for patient axis specifications
 AXIAL = 0
 CORONAL = 1
 SAGITTAL = 2
-
-

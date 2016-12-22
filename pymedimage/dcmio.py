@@ -10,11 +10,10 @@ import sys
 import logging
 import dicom
 from string import Template
-from utils.misc import indent, g_indents
+from .misc import indent, g_indents
 
 # initialize module logger
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
 
 def write_dicom(path, dataset):
     """write a pydicom dataset to dicom file"""

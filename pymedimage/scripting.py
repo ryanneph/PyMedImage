@@ -13,7 +13,6 @@ from utils import dcmio, cluster, rttypes
 
 # initialize module logger
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
 
 l1_indent = g_indents[1]
 l2_indent = g_indents[2]

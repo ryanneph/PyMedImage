@@ -1,17 +1,20 @@
 """cluster.py
 
 implementation of clustering algorithms and helpers for working with rttypes"""
+import os
 import logging
+import time
+from multiprocess import Pool
 from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.preprocessing import StandardScaler
 import scipy.cluster.hierarchy as sch
 import numpy as np
-from utils.misc import indent, g_indents, generate_heatmap_label
-from utils.rttypes import MaskableVolume
+from .notifications import pushNotification
+from .misc import indent, g_indents, generate_heatmap_label
+from .rttypes import MaskableVolume
 
 # initialize module logger
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
 
 # module level variables
 GLOBAL = {'scipy_hcluster_valid_methods': ['ward', 'single', 'complete', 'average', 'weighted',
@@ -59,9 +62,10 @@ def expand_pruned_vector(pruned_vector, roi, frameofreference, fill_value=-1):
     performs opposite function of create_pruned_vector
 
     Args:
-        pruned_vector -- numpy 1Darray containing voxel intensities only for those positions where roi mask
+        pruned_vector    -- numpy 1Darray containing voxel intensities only for those positions where roi mask
                             evaluates to 1
-        roi -- roi to use when adding voxels into the MaskableVolume
+        roi              -- roi to use when adding voxels into the MaskableVolume
+        frameofreference -- informs the roi about how to create dense binary mask necessary for expansion
 
     Returns:
         MaskableVolume of the same size as frameofreference specified
@@ -108,7 +112,7 @@ def create_feature_matrix(feature_volumes, roi=None):
                         in the list (len(feature_volumes))
     """
     if len(feature_volumes) <= 0:
-        logger.info(indent('no features supplied. skipping', g_indents[1]))
+        logger.warning(indent('no features supplied. skipping', g_indents[1]))
         return None
     else:
         if (roi):
@@ -128,7 +132,7 @@ def create_feature_matrix(feature_volumes, roi=None):
 
         # take the selected FORs shape to be the reference
         ref_shape = frameofreference.size[::-1]  # reverses tuple from (x,y,z) to (z,y,x)
-        logger.info('Common Shape (z,y,x): ({:d}, {:d}, {:d})'.format(*ref_shape))
+        logger.debug('Common Shape (z,y,x): ({:d}, {:d}, {:d})'.format(*ref_shape))
 
         # create list of commonly shaped feature vectors
         conformed_feature_list = []
@@ -137,14 +141,14 @@ def create_feature_matrix(feature_volumes, roi=None):
         for i, vol in enumerate(feature_volumes):
             # check for invalid feature
             if (vol is None):
-                logger.info('empty (None) feature provided at index {:d}, removing and continuing'.format(i))
+                logger.debug('empty (None) feature provided at index {:d}, removing and continuing'.format(i))
                 continue
 
             # conform feature volumes and add to list
             conformed_volume = vol.conformTo(frameofreference)
 
             if (conformed_volume.array.shape != ref_shape):
-                logger.info(indent('shape mismatch. ref={ref:s} != feature[{num:d}]={shape:s}.'
+                logger.warning(indent('shape mismatch. ref={ref:s} != feature[{num:d}]={shape:s}.'
                 ' removing and continuing'.format(ref=str(ref_shape),
                                                   num=i,
                                                   shape=str(conformed_volume.array.shape))
@@ -164,14 +168,14 @@ def create_feature_matrix(feature_volumes, roi=None):
         # create expanded/dense version for pickling and using in hierarchical clustering
         dense_feature_array = np.concatenate(dense_feature_list, axis=1)
 
-        logger.info(indent('combined {n:d} features into pruned array of shape: {shape:s}'.format(
+        logger.debug(indent('combined {n:d} features into pruned array of shape: {shape:s}'.format(
             n=pruned_feature_array.shape[1],
             shape=str(pruned_feature_array.shape))
             , g_indents[1]))
         return (pruned_feature_array, frameofreference, dense_feature_array, feature_column_labels)
 
 
-def cluster_kmeans(feature_matrix, nclusters=10, eps=1e-4, njobs=-3):
+def cluster_kmeans(feature_matrix, nclusters=10, eps=1e-4, njobs=-2):
     """take input feature array of N rows and D columns and perform standard kmeans clustering using \
             sklearn kmeans library
 
@@ -187,8 +191,8 @@ def cluster_kmeans(feature_matrix, nclusters=10, eps=1e-4, njobs=-3):
     """
     # check inputs
     if not isinstance(feature_matrix, np.ndarray):
-        logger.info(indent('a proper numpy ndarray was not provided. skipping.', g_indents[1]))
-        logger.info(indent(str(type(feature_matrix)) + str(type(np.ndarray)), g_indents[1]))
+        logger.warning(indent('a proper numpy ndarray was not provided. skipping.', g_indents[1]))
+        logger.warning(indent(str(type(feature_matrix)) + str(type(np.ndarray)), g_indents[1]))
         return None
     if (nclusters<=1):
         logger.exception(indent('k must be >1', g_indents[1]))
@@ -208,8 +212,8 @@ def cluster_kmeans(feature_matrix, nclusters=10, eps=1e-4, njobs=-3):
                 n_jobs=njobs
                 )
     km.fit(normalized_feature_matrix)
-    logger.info(indent('#iters: {:d}'.format(km.n_iter_), g_indents[1]))
-    logger.info(indent('score: {score:0.4f}'.format(score=km.score(normalized_feature_matrix)), g_indents[1]))
+    logger.debug(indent('#iters: {:d}'.format(km.n_iter_), g_indents[1]))
+    logger.debug(indent('score: {score:0.4f}'.format(score=km.score(normalized_feature_matrix)), g_indents[1]))
     return km.predict(normalized_feature_matrix)
 
 def cluster_hierarchical_sklearn(feature_matrix, nclusters=3, affinity='euclidean', linkage='ward'):
@@ -271,8 +275,8 @@ def cluster_hierarchical_sklearn(feature_matrix, nclusters=3, affinity='euclidea
 
     # perform fit and estimation
     prediction = agg.fit_predict(normalized_feature_matrix)
-    logger.info(indent('#leaves: {:d}'.format(agg.n_leaves_), g_indents[1]))
-    logger.info(indent('#components: {:d}'.format(agg.n_components_), g_indents[1]))
+    logger.debug(indent('#leaves: {:d}'.format(agg.n_leaves_), g_indents[1]))
+    logger.debug(indent('#components: {:d}'.format(agg.n_components_), g_indents[1]))
     return (prediction, agg)
 
 def cluster_hierarchical_scipy(feature_matrix, nclusters=3, metric='euclidean', method='ward'):
@@ -325,3 +329,149 @@ def cluster_hierarchical_scipy(feature_matrix, nclusters=3, metric='euclidean', 
     linkage_matrix = sch.linkage(normalized_feature_matrix, method, metric)
     prediction = sch.fcluster(linkage_matrix, nclusters, criterion='maxclust')
     return (prediction, linkage_matrix)
+
+
+
+def DOICluster(doi, local_feature_defs, nclusters=20, recluster=False):
+    """single-doi, multi-feature sub-unit that can be multithreaded and called by a pool of workers
+
+    Args:
+        doi (str): string identifier unique to each patient/doi
+        local_feature_defs (list<LocalFeatureDefinition>): contains information for identifying features
+            to cluster
+
+    Returns:
+        int: status code
+    """
+    # generate doi specific paths
+    p_doi_features = doi.getFeaturesPath()
+    p_doi_clusters = os.path.join(doi.p_CLUSTERS, str(doi))
+    p_clusters_l1_pickle = doi.getClusterL1PicklePath()
+    os.makedirs(p_doi_clusters, exist_ok=True)
+
+    # check for existing cluster
+    reclustered = False
+    if (os.path.exists(p_clusters_l1_pickle)):
+        if not recluster:
+            return 10
+        else:
+            reclustered = True
+    feature_volume_list = []
+
+    # load dicom data
+    image_vol = doi.getImageVolume()
+    roi = doi.getROI()
+    if (not image_vol or not roi):
+        # print('missing ct or roi. skipping.')
+        return 1
+    # feature_volume_list.append(image_vol)
+
+    # load feature volumes
+    for feature_def in local_feature_defs:
+        # import features and append to feature volume list
+        matches = feature_def.findFiles(p_doi_features)
+        if not matches:
+            message = 'Feature file couldn\'t be found: {!s}'.format(feature_def.generateFilename())
+            logger.error(message)
+            return 1
+
+        feature_volume_list.append(MaskableVolume().fromPickle(matches[0]))
+
+    # create feature matrix for clustering from feature volume list (pruning is handled automatically)
+    (pruned_feature_array, frameofreference, _, _) = create_feature_matrix(feature_volume_list, roi)
+
+    # Cluster and create cluster volume then pickle it
+    pruned_cluster_vector = cluster_kmeans(pruned_feature_array, nclusters, njobs=1)
+    dense_cluster_volume = expand_pruned_vector(pruned_cluster_vector, roi, frameofreference)
+    dense_cluster_volume.toPickle(p_clusters_l1_pickle)
+
+    if reclustered:
+        return 11
+    else:
+        return 0
+
+def worker_DOICluster(args_tuple):
+    """handles worker pool logging and argument unpacking"""
+    time_start = time.time()
+    try:
+        (doi, local_feature_def, nclusters) = args_tuple[:3]
+        result_code = DOICluster(*args_tuple, recluster=True)
+
+        if (result_code == 0):
+            result_string = 'success'
+        elif (result_code == 1):
+            result_string = 'missing data'
+        elif (result_code == 10):
+            result_string = 'skipped'
+        elif (result_code == 11):
+            result_string = 'recalc'
+        else:
+            # unknown result
+            result_code = -1
+            result_string = 'unknown'
+
+    except Exception as e:
+        result_code = 2
+        result_string = 'exception'
+        logger.error('{!s}'.format(e))
+
+    time_end = time.time()
+    job_time_string = time.strftime('%H:%M:%S', time.gmtime(time_end-time_start))
+
+    return (result_code, result_string, job_time_string, doi)
+
+def multiprocessDOICluster(doi_list, feature_defs, nclusters=20, processes=16, logskipped=True):
+    """multithreaded manager"""
+    # build argmap for worker pool
+    argmap = []
+    for doi in doi_list:
+        argmap.append((doi, feature_defs, nclusters))
+
+    try:
+        # start multiprocessing and print output summary for each job
+        time_start = time.time()
+        total_jobs = len(argmap)
+        jnum = 0
+        error_count = 0
+        # limit number of concurrent processes as there is only so much GPU memory available at one time<Plug>(neosnippet_expand)
+        # with 8 proc: max mem usage of ~4-4.5GB of 12.204GB total global mem
+        with Pool(processes=processes) as p:
+            logger.info('Level 1 Clustering:')
+            logger.info('-----------------------------------------------------------------------------------------')
+            logger.info('BEGINNING PROCESSING (at {!s})'.format(time.strftime('%Y-%b-%d %H:%M:%S')))
+            logger.info('')
+            logger.info('RESULTS:  (total #jobs: {:d})'.format(total_jobs))
+            logger.info('-----------------------------------------------------------------------------------------')
+
+            for worker_results in p.imap(worker_DOICluster, argmap, chunksize=1):
+                jnum += 1
+                (result_code, result_string, job_time_string, doi) = worker_results
+                if (result_code!=10 or (result_code==10 and logskipped)):
+                    log_string = 'job#{jnum:_>5d} [{string:12s}:{code:2d}]: {doi!s:9s}  {time!s}'.format(
+                        jnum    = jnum,
+                        string  = result_string,
+                        code    = result_code,
+                        doi     = doi,
+                        time    = job_time_string
+                    )
+                    logger.info(log_string)
+
+                if (result_code == -1 or (result_code > 0 and result_code < 10)):
+                    error_count += 1
+                    logger.error('{:05d}.  {!s}'.format(error_count, log_string))
+
+        time_finish = time.time()
+        logger.info('-----------------------------------------------------------------------------------------')
+        logger.info('(success: {:d} | error: {:d}) of {:d} jobs'.format(total_jobs-error_count, error_count,
+                                                                        total_jobs))
+        logger.info('total time: {:s}'.format(time.strftime('%H:%M:%S', time.gmtime(time_finish-time_start))))
+        logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
+        logger.info('')
+
+    except Exception as e:
+        pushNotification('FAILURE - Level1_Clustering.py', '{!s}'.format(repr(e)))
+        raise e
+
+    pushNotification('SUCCESS - Level1_Clustering.py', 'Finished processing {:d} jobs \
+                                 with {:d} errors'.format(total_jobs, error_count))
+

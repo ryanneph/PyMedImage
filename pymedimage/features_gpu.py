@@ -3,7 +3,7 @@ from string import Template
 import logging
 import math
 import numpy as np
-from utils.rttypes import MaskableVolume
+from .rttypes import MaskableVolume
 import gc
 import pycuda
 import pycuda.tools
@@ -11,17 +11,16 @@ import pycuda.driver as cuda
 from pycuda.compiler import SourceModule
 pycuda.compiler.DEFAULT_NVCC_FLAGS = ['--std=c++11']
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 # initialize module logger
 logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
 
 def elementwiseMean_gpu(feature_volume_list):
     """computes the elementwise mean of the like-shaped volumes in feature_volume_list"""
     # initialize cuda context
     cuda.init()
-    cudacontext = cuda.Device(0).make_context()
+    cudacontext = cuda.Device(1).make_context()
 
     parent_dir = os.path.dirname(os.path.realpath(__file__))
     with open(os.path.join(parent_dir, 'feature_compositions.cu'), mode='r') as f:
@@ -75,7 +74,7 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, d
     """
     # initialize cuda context
     cuda.init()
-    cudacontext = cuda.Device(0).make_context()
+    cudacontext = cuda.Device(1).make_context()
 
     cuda_template = Template("""
     #define RADIUS $RADIUS
