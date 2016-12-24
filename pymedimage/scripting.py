@@ -68,12 +68,14 @@ def loadImages(images_path, modalities):
 def loadROIs(rtstruct_path):
     """loads an rtstruct specified by path and returns a dict of ROI objects
 
+    DEPRECATED IN FAVOR OF rttypes.ROI classmethod collectionFromFile(rtstruct_path)
     Args:
         rtstruct_path    -- path to rtstruct.dcm file
 
     Returns:
         dict<key='contour name', val=ROI>
     """
+    logger.warning('DEPRECATED IN FAVOR OF rttypes.ROI classmethod collectionFromFile(rtstruct_path)')
     if (not os.path.exists(rtstruct_path)):
         logger.info(indent('invalid path provided: "{:s}"'.format(rtstruct_path), l2_indent))
         raise ValueError
@@ -140,6 +142,7 @@ def getFeatureKeywords(feature_name, args):
     Returns:
         list of keyword strings which must be in filename for match
     """
+    logger.warning('DEPRECATED IN FAVOR OF CLASS METHOD: WritableFeatureDefinition.getKeywords()')
     keywords = ['feature={!s}'.format(feature_name)] + \
                ['{argname!s}={argval!s}'.format(argname=n, argval=v)
                 for (n, v) in args.items()]
@@ -157,6 +160,7 @@ def getArgsString(args, ignore_list=[]):
     Returns:
         string
     """
+    logger.warning('DEPRECATED IN FAVOR OF CLASS METHOD: WritableFeatureDefinition.getArgsString()')
     args_string_list = []
     for k, v in args.items():
         ignore = False
@@ -194,6 +198,7 @@ def checkPickle(root, label, args, mod=None, roi=None, all=False):
         return None
 
 def loadPickle(path, mod=None, feature_label=None, nindent=l2_indent):
+    logger.warning('DEPRECATED IN FAVOR OF: calculate_features.loadPrecalculated()')
     logger.info(indent('Pickled feature vector found ({!s}). Loading.'.format(mod), nindent))
     try:
         vol = MaskableVolume().fromPickle(path)
@@ -216,6 +221,7 @@ def loadPickle(path, mod=None, feature_label=None, nindent=l2_indent):
             return None
 
 def savePickle(path, vol, mod, label, args, roi=None, nindent=l2_indent):
+    logger.warning('savePickle DEPRECATED IN FAVOR OF: calculate_features.pickleFeature()')
     args_string = getArgsString(args, ignore_list=['glcm_stat_function'])
     if (roi is not None):
         roi_string = 'roi={!s}_'.format(roi.roiname)

@@ -6,6 +6,7 @@ import logging
 from multiprocessing import Pool
 from .rttypes import MaskableVolume
 from .notifications import pushNotification
+from .multiprocess_manager import MultiprocessManager
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -25,7 +26,7 @@ def loadPrecalculated(doi, local_feature_def):
         matches = local_feature_def.findFiles(p_doi_features)
         if matches and len(matches)>0:
             # print(', '.join(matches))
-            return None ##QUICKFIX - corrupt pickle file errors on nextline with HYPOFRAC dataset
+            # return None ##QUICKFIX - corrupt pickle file errors on nextline with HYPOFRAC dataset
             return MaskableVolume().fromPickle(matches[0])
     return None
 
@@ -36,7 +37,7 @@ def pickleFeature(doi, local_feature_def, result_array):
     result_array.toPickle(p_feat_pickle)
     logger.debug('Feature: "{:s}" was stored to: {!s}'.format(local_feature_def.label, p_feat_pickle))
 
-def calculateFeature(doi, local_feature_def):
+def calculateFeature(doi, local_feature_def, loadprecalculated=False):
     """single doi, single feature calculation sub-unit that can be multithreaded and called by a pool
     of workers
 
@@ -54,7 +55,9 @@ def calculateFeature(doi, local_feature_def):
             recalculated = True
         else:
             logger.debug('Feature already calculated. skipping')
-            loaded_feature_vol = loadPrecalculated(doi, local_feature_def)
+            if loadprecalculated:
+                loaded_feature_vol = loadPrecalculated(doi, local_feature_def)
+            else: loaded_feature_vol = None
             return (10, loaded_feature_vol)
 
     # load dicom data
@@ -67,6 +70,7 @@ def calculateFeature(doi, local_feature_def):
     # compute feature
     logger.debug('calculating "{!s}" for doi: {!s}'.format(local_feature_def.label, doi))
     feature_vol = local_feature_def.calculation_function(ct_vol, roi, **local_feature_def.args)
+    feature_vol.feature_label = local_feature_def.generateFeatureLabel()
 
     # return status
     if (recalculated):
@@ -74,18 +78,21 @@ def calculateFeature(doi, local_feature_def):
     else:
         return (0, feature_vol)
 
-def calculateCompositeFeature(doi, composite_feature_def, pickleintermediate=False):
+def calculateCompositeFeature(doi, composite_feature_def, pickleintermediate=False, loadprecalculated=False):
     recalculated = False
     if checkCalculated(doi, composite_feature_def):
         if (composite_feature_def.recalculate):
             recalculated = True
         else:
-            return (10, None)
+            if loadprecalculated:
+                loaded_composite_vol = loadPrecalculated(doi, composite_feature_def)
+            else: loaded_composite_vol = None
+            return (10, loaded_composite_vol)
 
     vol_list = []
     for lfeatdef in composite_feature_def.featdefs:
         # lfeatdef.recalculate = True  # force recalculation
-        result_code, feature_vol = calculateFeature(doi, lfeatdef)
+        result_code, feature_vol = calculateFeature(doi, lfeatdef, loadprecalculated=True)
         if result_code not in [0, 11, 10]:
             return 2, None
         if feature_vol:
@@ -95,6 +102,7 @@ def calculateCompositeFeature(doi, composite_feature_def, pickleintermediate=Fal
     if len(vol_list) <= 0:
         return 3, None
     composite_vol = composite_feature_def.composition_function(vol_list)
+    composite_vol.feature_label = composite_feature_def.generateFeatureLabel()
 
     # return status
     if (recalculated):
@@ -142,62 +150,27 @@ def worker_calculateFeature(args_tuple):
 
     return (result_code, result_string, job_time_string, doi, local_feature_def)
 
+def logstringgenerator_calculateFeature(worker_results):
+    (result_code, result_string, job_time_string, doi, local_feature_def) = worker_results
+    log_string = '[{string:12s}:{code:2d}]: {doi!s:9s}  {label!s:25s}  {args!s:45s}  {time!s}'.format(
+        string  = result_string,
+        code    = result_code,
+        doi     = doi,
+        label   = local_feature_def.label,
+        args    = local_feature_def.getArgsString(),
+        time    = job_time_string
+    )
+    return log_string
 
-def multiprocessCalculateFeatures(doi_list, feature_def_list, processes=16, logskipped=True):
+def multiprocessCalculateFeatures(doi_list, feature_def_list, processes=16, notify=True):
     """multithreaded manager for calculating local image features for a large number of dois"""
-
     # build argmap for worker pool
     argmap = []
     for doi in doi_list:
         for local_feature_def in feature_def_list:
             argmap.append((doi, local_feature_def))
 
-    try:
-        # start multiprocessing and print output summary for each job
-        time_start = time.time()
-        total_jobs = len(argmap)
-        jnum = 0
-        error_count = 0
-        # limit number of concurrent processes as there is only so much GPU memory available at one time<Plug>(neosnippet_expand)
-        # with 8 proc: max mem usage of ~4-4.5GB of 12.204GB total global mem
-        with Pool(processes=processes) as p:
-            logger.info('Feature Calculation:')
-            logger.info('-----------------------------------------------------------------------------------------')
-            logger.info('BEGINNING PROCESSING (at {!s})'.format(time.strftime('%Y-%b-%d %H:%M:%S')))
-            logger.info('')
-            logger.info('RESULTS:  (total #jobs: {:d})'.format(total_jobs))
-            logger.info('-----------------------------------------------------------------------------------------')
-
-            for worker_results in p.imap(worker_calculateFeature, argmap, chunksize=1):
-                jnum += 1
-                (result_code, result_string, job_time_string, doi, local_feature_def) = worker_results
-                if (result_code!=10 or (result_code==10 and logskipped)):
-                    log_string = 'job#{jnum:_>5d} [{string:12s}:{code:2d}]: {doi!s:9s}  {label!s:25s}  {args!s:45s}  {time!s}'.format(
-                        jnum    = jnum,
-                        string  = result_string,
-                        code    = result_code,
-                        doi     = doi,
-                        label   = local_feature_def.label,
-                        args    = local_feature_def.getArgsString(),
-                        time    = job_time_string
-                    )
-                    logger.info(log_string)
-
-                if (result_code == -1 or (result_code > 0 and result_code < 10)):
-                    error_count += 1
-                    logger.error('{:05d}.  {!s}'.format(error_count, log_string))
-
-        time_finish = time.time()
-        logger.info('-----------------------------------------------------------------------------------------')
-        logger.info('(success: {:d} | error: {:d}) of {:d} jobs'.format(total_jobs-error_count, error_count,
-                                                                        total_jobs))
-        logger.info('total time: {:s}'.format(time.strftime('%H:%M:%S', time.gmtime(time_finish-time_start))))
-        logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        logger.info('')
-
-    except Exception as e:
-        pushNotification('FAILURE - Multiprocess_Features', '{!s}'.format(repr(e)))
-        raise e
-
-    pushNotification('SUCCESS - Multiprocess_Features', 'Finished processing {:d} jobs \
-                                 with {:d} errors'.format(total_jobs, error_count))
+    manager = MultiprocessManager('Feature Calculation')
+    manager.registerWorkerFunction(worker_calculateFeature)
+    manager.registerLogStringGenerator(logstringgenerator_calculateFeature)
+    manager.execute(argmap, processes=processes, notify=notify)

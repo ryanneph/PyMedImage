@@ -61,6 +61,12 @@ class WritableFeatureDefinition:
                 args=self.getArgsString(ignore_list)
             )
 
+    def generateFeatureLabel(self, ignore_list=['glcm_stat_function']):
+        return 'feature={label!s}_args=({args!s})'.format(
+                label=self.label,
+                args=self.getArgsString(ignore_list)
+            )
+
     def getKeywords(self):
         """generates keywords list for finding a pickled feature file using findFiles()
 

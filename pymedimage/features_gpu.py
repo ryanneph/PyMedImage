@@ -61,6 +61,7 @@ def elementwiseMean_gpu(feature_volume_list):
     gc.collect()
 
     x = MaskableVolume().fromArray(result, FOR)
+    x.modality = feature_volume_list[0].modality
     return x
 
 
@@ -491,6 +492,8 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=12, dx=1, d
         result = result.reshape(d,r,c)
 
     if toBaseVolume:
-        return MaskableVolume().fromArray(result, roi.frameofreference)
+        outvolume = MaskableVolume().fromArray(result, roi.frameofreference)
+        outvolume.modality = image_volume.modality
+        return outvolume
     else:
         return result

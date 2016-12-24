@@ -4,14 +4,14 @@ implementation of clustering algorithms and helpers for working with rttypes"""
 import os
 import logging
 import time
-from multiprocess import Pool
+import pickle
 from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.preprocessing import StandardScaler
 import scipy.cluster.hierarchy as sch
 import numpy as np
-from .notifications import pushNotification
 from .misc import indent, g_indents, generate_heatmap_label
 from .rttypes import MaskableVolume
+from .multiprocess_manager import MultiprocessManager
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -331,59 +331,72 @@ def cluster_hierarchical_scipy(feature_matrix, nclusters=3, metric='euclidean', 
     return (prediction, linkage_matrix)
 
 
-
-def DOICluster(doi, local_feature_defs, nclusters=20, recluster=False):
-    """single-doi, multi-feature sub-unit that can be multithreaded and called by a pool of workers
+def DOICluster(doi_list, local_feature_defs, nclusters=20, recluster=False):
+    """single/multi-doi, multi-feature sub-unit that can be multithreaded and called by a pool of workers
 
     Args:
         doi (str): string identifier unique to each patient/doi
+        doi (list): collection of doi's to be clustered together (usually multimodal same patient)
         local_feature_defs (list<LocalFeatureDefinition>): contains information for identifying features
             to cluster
 
     Returns:
         int: status code
     """
-    # generate doi specific paths
-    p_doi_features = doi.getFeaturesPath()
-    p_doi_clusters = os.path.join(doi.p_CLUSTERS, str(doi))
-    p_clusters_l1_pickle = doi.getClusterL1PicklePath()
-    os.makedirs(p_doi_clusters, exist_ok=True)
+    if not isinstance(doi_list, list):
+        doi_list = [doi_list]
 
-    # check for existing cluster
-    reclustered = False
-    if (os.path.exists(p_clusters_l1_pickle)):
-        if not recluster:
-            return 10
-        else:
-            reclustered = True
     feature_volume_list = []
+    for doi in doi_list:
+        # generate doi specific paths
+        p_doi_features = doi.getFeaturesPath()
+        p_doi_clusters = os.path.join(doi.p_CLUSTERS, str(doi))
+        p_clusters_l1_pickle = doi.getClusterL1PicklePath()
 
-    # load dicom data
-    image_vol = doi.getImageVolume()
-    roi = doi.getROI()
-    if (not image_vol or not roi):
-        # print('missing ct or roi. skipping.')
-        return 1
-    # feature_volume_list.append(image_vol)
+        # check for existing cluster
+        reclustered = False
+        if (os.path.exists(p_clusters_l1_pickle)):
+            if not recluster:
+                return 10
+            else:
+                reclustered = True
 
-    # load feature volumes
-    for feature_def in local_feature_defs:
-        # import features and append to feature volume list
-        matches = feature_def.findFiles(p_doi_features)
-        if not matches:
-            message = 'Feature file couldn\'t be found: {!s}'.format(feature_def.generateFilename())
-            logger.error(message)
+        # load dicom data
+        image_vol = doi.getImageVolume()
+        roi = doi.getROI()
+        if (not image_vol or not roi):
+            # print('missing ct or roi. skipping.')
             return 1
+        feature_volume_list.append(image_vol)
 
-        feature_volume_list.append(MaskableVolume().fromPickle(matches[0]))
+        # load feature volumes
+        for feature_def in local_feature_defs:
+            # import features and append to feature volume list
+            matches = feature_def.findFiles(p_doi_features)
+            if not matches:
+                message = 'Feature file couldn\'t be found: {!s}'.format(feature_def.generateFilename())
+                logger.error(message)
+                return 1
+
+            feature_volume_list.append(MaskableVolume().fromPickle(matches[0]))
 
     # create feature matrix for clustering from feature volume list (pruning is handled automatically)
-    (pruned_feature_array, frameofreference, _, _) = create_feature_matrix(feature_volume_list, roi)
+    (pruned_feature_array, frameofreference, \
+        full_feature_array, feat_column_labels) = create_feature_matrix(feature_volume_list, roi)
 
     # Cluster and create cluster volume then pickle it
     pruned_cluster_vector = cluster_kmeans(pruned_feature_array, nclusters, njobs=1)
     dense_cluster_volume = expand_pruned_vector(pruned_cluster_vector, roi, frameofreference)
+    os.makedirs(p_doi_clusters, exist_ok=True)
     dense_cluster_volume.toPickle(p_clusters_l1_pickle)
+
+    # store feature matrix in pickle as numpy ndarray
+    # package full_feature_array into dict with labeling of the featues associated with each column
+    # and each row corresponding to each row of the dense_cluster_volume in flattened form
+    featpickle_dict = {'feature_matrix': full_feature_array,
+                       'labels':         feat_column_labels}
+    with open(doi.getClusterL1FeaturesPicklePath(), mode='wb') as f:
+        pickle.dump(featpickle_dict, f)  # dense form
 
     if reclustered:
         return 11
@@ -420,58 +433,23 @@ def worker_DOICluster(args_tuple):
 
     return (result_code, result_string, job_time_string, doi)
 
-def multiprocessDOICluster(doi_list, feature_defs, nclusters=20, processes=16, logskipped=True):
-    """multithreaded manager"""
-    # build argmap for worker pool
+def logstringgenerator_DOICluster(worker_results):
+    (result_code, result_string, job_time_string, doi) = worker_results
+    if isinstance(doi, list): doi = doi[0]
+    log_string = '[{string:12s}:{code:2d}]: {doi!s:9s}  {time!s}'.format(
+        string  = result_string,
+        code    = result_code,
+        doi     = doi,
+        time    = job_time_string
+    )
+    return log_string
+
+def multiprocessDOICluster(doi_list, feature_defs, nclusters=20, processes=16, notify=True):
     argmap = []
     for doi in doi_list:
         argmap.append((doi, feature_defs, nclusters))
 
-    try:
-        # start multiprocessing and print output summary for each job
-        time_start = time.time()
-        total_jobs = len(argmap)
-        jnum = 0
-        error_count = 0
-        # limit number of concurrent processes as there is only so much GPU memory available at one time<Plug>(neosnippet_expand)
-        # with 8 proc: max mem usage of ~4-4.5GB of 12.204GB total global mem
-        with Pool(processes=processes) as p:
-            logger.info('Level 1 Clustering:')
-            logger.info('-----------------------------------------------------------------------------------------')
-            logger.info('BEGINNING PROCESSING (at {!s})'.format(time.strftime('%Y-%b-%d %H:%M:%S')))
-            logger.info('')
-            logger.info('RESULTS:  (total #jobs: {:d})'.format(total_jobs))
-            logger.info('-----------------------------------------------------------------------------------------')
-
-            for worker_results in p.imap(worker_DOICluster, argmap, chunksize=1):
-                jnum += 1
-                (result_code, result_string, job_time_string, doi) = worker_results
-                if (result_code!=10 or (result_code==10 and logskipped)):
-                    log_string = 'job#{jnum:_>5d} [{string:12s}:{code:2d}]: {doi!s:9s}  {time!s}'.format(
-                        jnum    = jnum,
-                        string  = result_string,
-                        code    = result_code,
-                        doi     = doi,
-                        time    = job_time_string
-                    )
-                    logger.info(log_string)
-
-                if (result_code == -1 or (result_code > 0 and result_code < 10)):
-                    error_count += 1
-                    logger.error('{:05d}.  {!s}'.format(error_count, log_string))
-
-        time_finish = time.time()
-        logger.info('-----------------------------------------------------------------------------------------')
-        logger.info('(success: {:d} | error: {:d}) of {:d} jobs'.format(total_jobs-error_count, error_count,
-                                                                        total_jobs))
-        logger.info('total time: {:s}'.format(time.strftime('%H:%M:%S', time.gmtime(time_finish-time_start))))
-        logger.info('~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~')
-        logger.info('')
-
-    except Exception as e:
-        pushNotification('FAILURE - Level1_Clustering.py', '{!s}'.format(repr(e)))
-        raise e
-
-    pushNotification('SUCCESS - Level1_Clustering.py', 'Finished processing {:d} jobs \
-                                 with {:d} errors'.format(total_jobs, error_count))
-
+    manager = MultiprocessManager('Level 1 Clustering')
+    manager.registerWorkerFunction(worker_DOICluster)
+    manager.registerLogStringGenerator(logstringgenerator_DOICluster)
+    manager.execute(argmap, processes=processes, notify=notify)

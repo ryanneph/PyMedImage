@@ -126,6 +126,68 @@ class ROI:
             else:
                 self.frameofreference = self.getROIExtents()
 
+    @classmethod
+    def collectionFromFile(cls, rtstruct_path):
+        """loads an rtstruct specified by path and returns a dict of ROI objects
+
+        Args:
+            rtstruct_path    -- path to rtstruct.dcm file
+
+        Returns:
+            dict<key='contour name', val=ROI>
+        """
+        if (not os.path.exists(rtstruct_path)):
+            logger.debug('invalid path provided: "{:s}"'.format(rtstruct_path))
+            raise FileNotFoundError
+
+        # check if path is file or dir
+        if (os.path.isdir(rtstruct_path)):
+            # search recursively for a valid rtstruct file
+            ds_list = dcmio.read_dicom_dir(rtstruct_path, recursive=True)
+            if (ds_list is None or len(ds_list) == 0):
+                logger.debug('no rtstruct datasets found at "{:s}"'.format(rtstruct_path))
+                raise Exception
+            ds = ds_list[0]
+        elif (os.path.isfile(rtstruct_path)):
+            ds = dcmio.read_dicom(rtstruct_path)
+
+        # parse rtstruct file and instantiate maskvolume for each contour located
+        # add each maskvolume to dict with key set to contour name and number?
+        if (ds is not None):
+            # get structuresetROI sequence
+            StructureSetROI_list = ds.StructureSetROISequence
+            nContours = len(StructureSetROI_list)
+            if (nContours <= 0):
+                logger.debug('no contours were found')
+                return None
+
+            # Add structuresetROI to dict
+            StructureSetROI_dict = {StructureSetROI.ROINumber: StructureSetROI
+                                    for StructureSetROI
+                                    in StructureSetROI_list }
+
+            # get dict containing a contour dataset for each StructureSetROI with a paired key=ROINumber
+            ROIContour_dict = {ROIContour.ReferencedROINumber: ROIContour
+                               for ROIContour
+                               in ds.ROIContourSequence }
+
+            # construct a dict of ROI objects where contour name is key
+            roi_dict = {}
+            for ROINumber, structuresetroi in StructureSetROI_dict.items():
+                roi_dict[structuresetroi.ROIName] = (cls(frameofreference=None,
+                                                         roicontour=ROIContour_dict[ROINumber],
+                                                         structuresetroi=structuresetroi))
+            # prune empty ROIs from dict
+            for roiname, roi in dict(roi_dict).items():
+                if (roi.coordslices is None or len(roi.coordslices) <= 0):
+                    logger.debug('pruning empty ROI: {:s} from loaded ROIs'.format(roiname))
+                    del roi_dict[roiname]
+
+            logger.debug('loaded {:d} ROIs succesfully'.format(len(roi_dict)))
+            return roi_dict
+        else:
+            logger.debug('no dataset was found')
+            return None
 
     def makeDenseMaskSlice(self, position, frameofreference=None):
         """Takes a FrameOfReference and constructs a dense binary mask for the ROI (1 inside ROI, 0 outside)
