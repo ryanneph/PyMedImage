@@ -89,7 +89,6 @@ def expand_pruned_vector(pruned_vector, roi, frameofreference, fill_value=-1):
                 else:
                     expanded_vector.append(fill_value)
 
-
     # convert to np.array/vector
     expanded_vector = np.array(expanded_vector)
     logger.debug('post-expansion voxel count: {!s}'.format(expanded_vector.shape[0]))
