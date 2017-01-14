@@ -10,8 +10,11 @@ logger = logging.getLogger(__name__)
 class MultiprocessManager:
     def __init__(self, title, workerfunction=None, logstringgenerator=None):
         self.title = title
-        self.logstringgenerator = logstringgenerator
         self.workerfunction = workerfunction
+        if logstringgenerator:
+            self.logstringgenerator = logstringgenerator
+        else:
+            self.logstringgenerator = logstringgenerator_generic
 
     def registerLogStringGenerator(self, genfunction):
         self.logstringgenerator = genfunction
@@ -63,3 +66,17 @@ class MultiprocessManager:
 
         if notify: pushNotification('SUCCESS - {!s}'.format(self.title), 'Finished processing {:d} jobs \
                                      with {:d} errors'.format(total_jobs, error_count))
+
+####################################################################################################
+# Sample Code
+####################################################################################################
+def logstringgenerator_generic(worker_results):
+    (result_code, result_string, job_time_string, doi) = worker_results
+    if isinstance(doi, list): doi = doi[0]
+    log_string = '[{string:12s}:{code:2d}]: {doi!s:9s}  {time!s}'.format(
+        string  = result_string,
+        code    = result_code,
+        doi     = doi,
+        time    = job_time_string
+    )
+    return log_string

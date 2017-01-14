@@ -9,6 +9,7 @@ import numpy as np
 import dicom  # pydicom
 import pickle
 import copy
+import warnings
 from PIL import Image, ImageDraw
 from scipy.ndimage import interpolation
 from . import dcmio, misc
@@ -47,6 +48,12 @@ class FrameOfReference:
         self.spacing = spacing
         self.size = size
         self.UID = UID
+
+    def __str__(self):
+        return 'FrameOfReference:\n' + \
+               'start   <mm> (x,y,z): ({:0.3f}, {:0.3f}, {:0.3f})\n'.format(*self.start) + \
+               'spacing <mm> (x,y,z): ({:0.3f}, {:0.3f}, {:0.3f})\n'.format(*self.spacing) + \
+               'size    <mm> (x,y,z): ({:d}, {:d}, {:d})'.format(*self.size)
 
     def end(self):
         """Calculates the (x,y,z) coordinates of the end of the frame of reference (mm)
@@ -396,7 +403,8 @@ class BaseVolume:
         self.feature_label = None
 
     # CONSTRUCTOR METHODS
-    def fromArray(self, array, frameofreference):
+    @classmethod
+    def fromArray(cls, array, frameofreference):
         """Constructor: from a numpy array and FrameOfReference object
 
         Args:
@@ -404,17 +412,21 @@ class BaseVolume:
             frameofreference  -- FrameOfReference object
         """
         # ensure array matches size in frameofreference
+        self = cls()
         self.array = array.reshape(frameofreference.size[::-1])
         self.frameofreference = frameofreference
 
         return self
 
-    def fromDir(self, path, recursive=False):
+    @classmethod
+    def fromDir(cls, path, recursive=False):
         """constructor: takes path to directory containing dicom files and builds a sorted array
 
         Args:
             recursive -- find dicom files in all subdirectories?
         """
+        self = cls()
+
         # get the datasets from files
         dataset_list = dcmio.read_dicom_dir(path, recursive=recursive)
 
@@ -566,6 +578,22 @@ class BaseVolume:
         resampled_volume = copy.deepcopy(self)
         resampled_volume.fromArray(resampled_array, frameofreference)
         return resampled_volume
+
+    def resample(self, new_voxelsize, order=3):
+        """resamples volume to new voxelsize
+
+        Args:
+            new_voxelsize: 3 tuple of voxel size in mm in the order (X, Y, Z)
+
+        """
+        # voxelsize spec is in order (X,Y,Z) but array is kept in order (Z, Y, X)
+        zoom_factors = np.true_divide(self.frameofreference.spacing, new_voxelsize)[::-1]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            zoomarray = interpolation.zoom(self.array, zoom_factors, order=order, mode='nearest')
+        zoomFOR = FrameOfReference(self.frameofreference.start, new_voxelsize, zoomarray.shape[::-1])
+        new_vol = MaskableVolume.fromArray(zoomarray, zoomFOR)
+        return new_vol
 
     def getSlice(self, idx, axis=0, rescale=False, flatten=False):
         """Extracts 2dArray of idx along the axis.

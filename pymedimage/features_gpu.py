@@ -23,7 +23,7 @@ def elementwiseMean_gpu(feature_volume_list):
     cudacontext = cuda.Device(1).make_context()
 
     parent_dir = os.path.dirname(os.path.realpath(__file__))
-    with open(os.path.join(parent_dir, 'feature_compositions.cu'), mode='r') as f:
+    with open(os.path.join(parent_dir, 'feature_compositions.cuh'), mode='r') as f:
         mod = SourceModule(f.read(), cache_dir=False,
                            options=['-I {!s}'.format(parent_dir),
                                     # '-g', '-G', '-lineinfo'

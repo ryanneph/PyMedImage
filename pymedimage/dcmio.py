@@ -48,7 +48,7 @@ def read_dicom_dir(path, recursive=False, verbosity=0):
         if recursive:
             extra = ' and subdirs'
         printstring = printstring.substitute(extra=extra).format(path)
-        logger.info(indent(printstring, l1_indent))
+        logger.debug(indent(printstring, l1_indent))
         for root, dirs, files in os.walk(path, topdown=True):
             # build the list of valid dicom file paths then load them after walk
             for file in files:
