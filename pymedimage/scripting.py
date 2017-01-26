@@ -75,7 +75,7 @@ def loadROIs(rtstruct_path):
     Returns:
         dict<key='contour name', val=ROI>
     """
-    logger.warning('DEPRECATED IN FAVOR OF rttypes.ROI classmethod collectionFromFile(rtstruct_path)')
+    logger.warning('scripting.loadROIs() DEPRECATED IN FAVOR OF rttypes.ROI classmethod collectionFromFile(rtstruct_path)')
     if (not os.path.exists(rtstruct_path)):
         logger.info(indent('invalid path provided: "{:s}"'.format(rtstruct_path), l2_indent))
         raise ValueError

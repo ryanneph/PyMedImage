@@ -140,6 +140,7 @@ def worker_calculateFeature(args_tuple):
             result_string = 'unknown'
 
     except Exception as e:
+        print(e)
         result_code = 2
         result_string = 'exception'
         logger.error('{!s}'.format(e))

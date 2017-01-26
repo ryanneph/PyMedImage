@@ -133,16 +133,9 @@ class ROI:
             else:
                 self.frameofreference = self.getROIExtents()
 
-    @classmethod
-    def collectionFromFile(cls, rtstruct_path):
-        """loads an rtstruct specified by path and returns a dict of ROI objects
-
-        Args:
-            rtstruct_path    -- path to rtstruct.dcm file
-
-        Returns:
-            dict<key='contour name', val=ROI>
-        """
+    @staticmethod
+    def _loadRtstructDicom(rtstruct_path):
+        """load rtstruct dicom data from a direct path or containing directory"""
         if (not os.path.exists(rtstruct_path)):
             logger.debug('invalid path provided: "{:s}"'.format(rtstruct_path))
             raise FileNotFoundError
@@ -157,6 +150,19 @@ class ROI:
             ds = ds_list[0]
         elif (os.path.isfile(rtstruct_path)):
             ds = dcmio.read_dicom(rtstruct_path)
+        return ds
+
+    @classmethod
+    def collectionFromFile(cls, rtstruct_path):
+        """loads an rtstruct specified by path and returns a dict of ROI objects
+
+        Args:
+            rtstruct_path    -- path to rtstruct.dcm file
+
+        Returns:
+            dict<key='contour name', val=ROI>
+        """
+        ds = cls._loadRtstructDicom(rtstruct_path)
 
         # parse rtstruct file and instantiate maskvolume for each contour located
         # add each maskvolume to dict with key set to contour name and number?
@@ -165,8 +171,7 @@ class ROI:
             StructureSetROI_list = ds.StructureSetROISequence
             nContours = len(StructureSetROI_list)
             if (nContours <= 0):
-                logger.debug('no contours were found')
-                return None
+                logger.exception('no contours were found')
 
             # Add structuresetROI to dict
             StructureSetROI_dict = {StructureSetROI.ROINumber: StructureSetROI
@@ -193,8 +198,26 @@ class ROI:
             logger.debug('loaded {:d} ROIs succesfully'.format(len(roi_dict)))
             return roi_dict
         else:
-            logger.debug('no dataset was found')
-            return None
+            logger.exception('no dataset was found')
+
+    @staticmethod
+    def getROINames(rtstruct_path):
+        ds = ROI._loadRtstructDicom(rtstruct_path)
+
+        if (ds is not None):
+            # get structuresetROI sequence
+            StructureSetROI_list = ds.StructureSetROISequence
+            nContours = len(StructureSetROI_list)
+            if (nContours <= 0):
+                logger.exception('no contours were found')
+
+            roi_names = []
+            for structuresetroi in StructureSetROI_list:
+                roi_names.append(structuresetroi.ROIName)
+
+            return roi_names
+        else:
+            logger.exception('no dataset was found')
 
     def makeDenseMaskSlice(self, position, frameofreference=None):
         """Takes a FrameOfReference and constructs a dense binary mask for the ROI (1 inside ROI, 0 outside)
