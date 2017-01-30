@@ -493,6 +493,11 @@ class BaseVolume:
             size = (dataset_list[0].Columns, dataset_list[0].Rows, len(dataset_list))
 
         UID = dataset_list[0].FrameOfReferenceUID
+        try:
+            self.rescaleparams = RescaleParams(scale=dataset_list[0].RescaleSlope,
+                                               offset=dataset_list[0].RescaleIntercept)
+        except:
+            self.rescaleparams = RescaleParams(scale=1, offset=0)
 
         self.frameofreference = FrameOfReference(start, spacing, size, UID)
 
@@ -509,8 +514,9 @@ class BaseVolume:
             array = array.reshape((1, array.shape[1], array.shape[0]))
             array_list.append(array)
 
-        # stack arrays
-        self.array = np.concatenate(array_list, axis=0)
+        # stack arrays and perform scaling/offset
+        self.array = np.concatenate(array_list, axis=0) * self.rescaleparams.scale + self.rescaleparams.offset
+        self.array = self.array.astype(int)
 
         return self
 
@@ -592,14 +598,13 @@ class BaseVolume:
             if (cropped.shape[i] <= 0):
                 logger.exception('request to conform to frame outside of volume\'s frame of reference failed')
                 raise Exception()
-            zoomfactors.insert(i, frameofreference.size[2-i] / cropped.shape[i])
+            zoomfactors.insert(i, float(frameofreference.size[2-i]) / cropped.shape[i])
         zoomfactors = tuple(zoomfactors)
         logger.debug('zoom factors (z, y, x): ({:0.3f}, {:0.3f}, {:0.3f})'.format(*zoomfactors))
         resampled_array = interpolation.zoom(cropped, zoomfactors, order=3, mode='constant', cval=0)
 
         # reconstruct volume from resampled array
-        resampled_volume = copy.deepcopy(self)
-        resampled_volume.fromArray(resampled_array, frameofreference)
+        resampled_volume = MaskableVolume().fromArray(resampled_array, frameofreference)
         return resampled_volume
 
     def resample(self, new_voxelsize, order=3):
