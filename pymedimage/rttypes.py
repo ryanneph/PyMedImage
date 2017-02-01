@@ -520,7 +520,8 @@ class BaseVolume:
 
         return self
 
-    def fromPickle(self, pickle_path):
+    @classmethod
+    def fromPickle(cls, pickle_path):
         """initialize BaseVolume from unchanging format so features can be stored and recalled long term
         """
         if (not os.path.exists(pickle_path)):
@@ -530,6 +531,7 @@ class BaseVolume:
 
         # import data to this object
         try:
+            self = cls()
             self.array = basevolumepickle.dataarray
             self.frameofreference = FrameOfReference(basevolumepickle.startposition,
                                                      basevolumepickle.spacing,
@@ -604,7 +606,10 @@ class BaseVolume:
         resampled_array = interpolation.zoom(cropped, zoomfactors, order=3, mode='constant', cval=0)
 
         # reconstruct volume from resampled array
-        resampled_volume = MaskableVolume().fromArray(resampled_array, frameofreference)
+        resampled_volume = MaskableVolume.fromArray(resampled_array, frameofreference)
+        resampled_volume.modality = self.modality
+        resampled_volume.feature_label = self.feature_label
+        resampled_volume.rescaleparams = self.rescaleparams
         return resampled_volume
 
     def resample(self, new_voxelsize, order=3):
