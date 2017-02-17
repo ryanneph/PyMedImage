@@ -1,20 +1,23 @@
-#define RADIUS $RADIUS
-#define Z_RADIUS $Z_RADIUS
-#define PATCH_SIZE (RADIUS*2+1)*(RADIUS*2+1)*(Z_RADIUS*2+1)
-#define IMAGE_WIDTH $IMAGE_WIDTH
-#define IMAGE_HEIGHT $IMAGE_HEIGHT
-#define IMAGE_DEPTH $IMAGE_DEPTH
-#define IMAGE_SIZE IMAGE_WIDTH*IMAGE_HEIGHT*IMAGE_DEPTH
-#define NBINS $NBINS
-#define GLCM_SIZE NBINS*NBINS
-#define NDEV $NDEV
-#define DX $DX
-#define DY $DY
-#define DZ $DZ
+#define RADIUS         $RADIUS
+#define Z_RADIUS       $Z_RADIUS
+#define PATCH_SIZE     (RADIUS*2+1)*(RADIUS*2+1)*(Z_RADIUS*2+1)
+#define IMAGE_WIDTH    $IMAGE_WIDTH
+#define IMAGE_HEIGHT   $IMAGE_HEIGHT
+#define IMAGE_DEPTH    $IMAGE_DEPTH
+#define IMAGE_SIZE     IMAGE_WIDTH*IMAGE_HEIGHT*IMAGE_DEPTH
+#define QUANTIZE_MODE  $QUANTIZE_MODE
+#define GRAY_LEVELS    $GRAY_LEVELS
+#define FIXED_BINWIDTH $FIXED_BINWIDTH
+#define FIXED_START    $FIXED_START
+#define NBINS          $NBINS
+#define GLCM_SIZE      NBINS*NBINS
+#define NDEV           $NDEV
+#define DX             $DX
+#define DY             $DY
+#define DZ             $DZ
 
 #include "math.h"
 #include <stdio.h>
-
 
 /* FORWARD DECLARATIONS */
 __device__ float mean_plugin_gpu(float *array);
@@ -45,10 +48,22 @@ namespace rn {
         return sqrtf(rn::variance(array, size, dof));
     }
 }
-__device__ void quantize_fixed_gpu(float *array, unsigned int HU) {
-    //WIPWIPWIPWIPWIPWIPWIPWIP
 
-    // quantize the array into bins of width 25HU
+__device__ void _quantize_fixed_gpu(float *array) {
+    /* bin definitions are as follows (11 bins total)
+     * x < -100
+     * -100 <= x < 350 ( in 25HU increments -> 9 bins )
+     * 350 <= x
+     */
+
+    // rebin values
+    for (int i=0; i<PATCH_SIZE; i++) {
+        array[i] = fminf(NBINS-1, fmaxf(0, floorf((array[i]-FIXED_START)/(FIXED_BINWIDTH))+1));
+    }
+}
+__device__ void _quantize_stat_gpu(float *array) {
+    // quantize the array into nbins, placing lower 2.5% and upper 2.5% residuals of gaussian
+    // distribution into first and last bins respectively
 
     // gaussian stats
     float f_mean = mean_plugin_gpu(array);
@@ -62,18 +77,14 @@ __device__ void quantize_fixed_gpu(float *array, unsigned int HU) {
     }
 }
 __device__ void quantize_gpu(float *array) {
-    // quantize the array into nbins, placing lower 2.5% and upper 2.5% residuals of gaussian
-    // distribution into first and last bins respectively
-
-    // gaussian stats
-    float f_mean = mean_plugin_gpu(array);
-    float f_std = stddev_plugin_gpu(array, 1);
-    float f_binwidth = 2*NDEV*f_std / (NBINS-2);
-    //printf("mean:%f std:%f width:%f\\n", f_mean, f_std, f_binwidth);
-
-    // rebin values
-    for (int i=0; i<PATCH_SIZE; i++) {
-        array[i] = fminf(NBINS-1, fmaxf(0, floorf(((array[i] - f_mean + NDEV*f_std)/(f_binwidth+1e-9)) + 1)));
+    /* quantize mode selector
+    */
+    if (QUANTIZE_MODE == 0) {
+        // NBINS defines -binwidth in HU
+        _quantize_fixed_gpu(array);
+    } else if (QUANTIZE_MODE == 1){
+        // NBINS defines total number of bins
+        _quantize_stat_gpu(array);
     }
 }
 
@@ -240,38 +251,38 @@ namespace rn {
     inline __device__ unsigned int glcm_getIndex(unsigned int x, unsigned int y) {
         return (NBINS * y + x);
     }
-    inline __device__ float glcm_marginal_Px(float* glcm_mat, unsigned int y) {
+    __device__ float glcm_marginal_Px(float* glcm_mat, unsigned int y) {
         float accum = 0.0f;
         for (int i=0; i<NBINS; i++) {
             accum += glcm_mat[ glcm_getIndex(i, y) ];
         }
         return accum;
     }
-    inline __device__ float glcm_marginal_Py(float* glcm_mat, unsigned int x) {
+    __device__ float glcm_marginal_Py(float* glcm_mat, unsigned int x) {
         float accum = 0.0f;
         for (int j=0; j<NBINS; j++) {
             accum += glcm_mat[ glcm_getIndex(x, j) ];
         }
         return accum;
     }
-    inline __device__ float glcm_meanP(float* glcm_mat) {
+    __device__ float glcm_meanP(float* glcm_mat) {
         return mean(glcm_mat, GLCM_SIZE);
     }
-    inline __device__ float glcm_mean_Px(float* glcm_mat) {
+    __device__ float glcm_mean_Px(float* glcm_mat) {
         float accum = 0.0f;
         for (int i=0; i<NBINS; i++) {
             accum += (glcm_marginal_Px(glcm_mat, i) * i);
         }
         return accum;
     }
-    inline __device__ float glcm_mean_Py(float* glcm_mat) {
+    __device__ float glcm_mean_Py(float* glcm_mat) {
         float accum = 0.0f;
         for (int j=0; j<NBINS; j++) {
             accum += (glcm_marginal_Py(glcm_mat, j) * j);
         }
         return accum;
     }
-    inline __device__ float glcm_variance_Px(float* glcm_mat) {
+    __device__ float glcm_variance_Px(float* glcm_mat) {
         float accum = 0.0f;
         for (int i=0; i<NBINS; i++) {
             for (int j=0; j<NBINS; j++) {
@@ -280,7 +291,7 @@ namespace rn {
         }
         return accum;
     }
-    inline __device__ float glcm_variance_Py(float* glcm_mat) {
+    __device__ float glcm_variance_Py(float* glcm_mat) {
         float accum = 0.0f;
         for (int i=0; i<NBINS; i++) {
             for (int j=0; j<NBINS; j++) {
@@ -289,7 +300,7 @@ namespace rn {
         }
         return accum;
     }
-    inline __device__ float glcm_marginal_Pxplusy(float* glcm_mat, unsigned int k) {
+    __device__ float glcm_marginal_Pxplusy(float* glcm_mat, unsigned int k) {
         float accum = 0.0f;
         for (int i=0; i<NBINS; i++) {
             for (int j=0; j<NBINS; j++) {
@@ -300,7 +311,7 @@ namespace rn {
         }
         return accum;
     }
-    inline __device__ float glcm_marginal_Pxminusy(float* glcm_mat, unsigned int k) {
+    __device__ float glcm_marginal_Pxminusy(float* glcm_mat, unsigned int k) {
         float accum = 0.0f;
         for (int i=0; i<NBINS; i++) {
             for (int j=0; j<NBINS; j++) {
@@ -542,7 +553,6 @@ __global__ void image_iterator_gpu(float *image_vect, float *result_vect) {
                 }
             }
         }
-        //result_vect[idx] = image_vect[idx];
         result_vect[idx] = ${KERNEL}(patch_array);
     }
 }

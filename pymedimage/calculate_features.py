@@ -7,6 +7,7 @@ from multiprocessing import Pool
 from .rttypes import MaskableVolume
 from .notifications import pushNotification
 from .multiprocess_manager import MultiprocessManager
+from .features_gpu import QMODE_STAT, QMODE_FIXEDHU
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -37,6 +38,19 @@ def pickleFeature(doi, local_feature_def, result_array):
     result_array.toPickle(p_feat_pickle)
     logger.debug('Feature: "{:s}" was stored to: {!s}'.format(local_feature_def.label, p_feat_pickle))
 
+def enforceGLCMQuantizationMode(feature_def, modality):
+    # force stat based GLCM quantization if not CT image
+    if 'gray_levels' in feature_def.args and 'binwidth' in feature_def.args:
+        if modality and modality.lower() == 'ct':
+            # enforce glcm FIXEDHU based quantization
+            del feature_def.args['gray_levels']
+        else:
+            # force glcm STAT based quantization
+            del feature_def.args['binwidth']
+    # elif 'binwidth' in feature_def.args and modality and modality.lower() != 'ct':
+    #     # force glcm STAT based quantization
+    #     del feature_def.args['binwidth']
+
 def calculateFeature(doi, local_feature_def, loadprecalculated=False):
     """single doi, single feature calculation sub-unit that can be multithreaded and called by a pool
     of workers
@@ -66,6 +80,9 @@ def calculateFeature(doi, local_feature_def, loadprecalculated=False):
     if (not ct_vol or not roi):
         logger.debug('missing ct or roi. skipping.')
         return (1, None)
+
+    # force stat based GLCM quantization if not CT image
+    enforceGLCMQuantizationMode(local_feature_def, ct_vol.modality)
 
     # compute feature
     logger.debug('calculating "{!s}" for doi: {!s}'.format(local_feature_def.label, doi))
@@ -101,6 +118,9 @@ def calculateCompositeFeature(doi, composite_feature_def, pickleintermediate=Fal
 
     if len(vol_list) <= 0:
         return 3, None
+
+    # force stat based GLCM quantization if not CT image
+    enforceGLCMQuantizationMode(composite_feature_def, vol_list[0].modality)
     composite_vol = composite_feature_def.composition_function(vol_list)
     composite_vol.feature_label = composite_feature_def.generateFeatureLabel()
 

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class DOIBase:
     """Defines a digital object identifier that supplies the paths and filenames for various feature/cluster algorithms"""
     __metaclass__ = ABCMeta
-    def __str__(self):
+    def __repr__(self):
         return str(self.doi)
 
     def __init__(self, doi):

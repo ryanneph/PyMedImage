@@ -7,6 +7,7 @@ import time
 import pickle
 from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA as sklearnPCA
 import scipy.cluster.hierarchy as sch
 import numpy as np
 from .misc import indent, g_indents, generate_heatmap_label
@@ -18,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 # module level variables
 GLOBAL = {'scipy_hcluster_valid_methods': ['ward', 'single', 'complete', 'average', 'weighted',
-                                          'centroid', 'median'],
+                                           'centroid', 'median'],
           'scipy_hcluster_valid_metrics': ['euclidean', 'cityblock', 'minkowski', 'sqeuclidean',
-                                          'seuclidean', 'cosine']
+                                           'seuclidean', 'cosine']
           }
 
 def create_pruned_vector(volume, roi):
@@ -97,7 +98,7 @@ def expand_pruned_vector(pruned_vector, roi, frameofreference, fill_value=-1):
     return MaskableVolume().fromArray(expanded_vector, frameofreference)
 
 
-def create_feature_matrix(feature_volumes, roi=None):
+def create_feature_matrix(feature_volumes, roi=None, PCA=False):
     """takes a list of feature BaseVolumes and combines them into a numpy ndarray of N rows and D features
 
     where N is the number of samples in each feature vector (voxels in the image) and D is the number of
@@ -148,10 +149,10 @@ def create_feature_matrix(feature_volumes, roi=None):
 
             if (conformed_volume.array.shape != ref_shape):
                 logger.warning(indent('shape mismatch. ref={ref:s} != feature[{num:d}]={shape:s}.'
-                ' removing and continuing'.format(ref=str(ref_shape),
-                                                  num=i,
-                                                  shape=str(conformed_volume.array.shape))
-                                                  , g_indents[1]))
+                                      ' removing and continuing'.format(ref=str(ref_shape),
+                                                                        num=i,
+                                                                        shape=str(conformed_volume.array.shape)),
+                                      g_indents[1]))
                 continue
             else:
                 # concatenate, need to make feat.array a 2d vector
@@ -163,9 +164,16 @@ def create_feature_matrix(feature_volumes, roi=None):
                 feature_column_labels.append(label)
 
         # combine accepted features into array of shape (nSamples, nFeatures)
-        pruned_feature_array = np.concatenate(conformed_feature_list, axis=1)
+        pruned_feature_array = np.nan_to_num(np.concatenate(conformed_feature_list, axis=1))
         # create expanded/dense version for pickling and using in hierarchical clustering
-        dense_feature_array = np.concatenate(dense_feature_list, axis=1)
+        dense_feature_array = np.nan_to_num(np.concatenate(dense_feature_list, axis=1))
+
+        # dimensionality reduction
+        if PCA:
+            pca = sklearnPCA(whiten=True, n_components=None)
+            nfeats = pruned_feature_array.shape[1]
+            pruned_feature_array = pca.fit_transform(pruned_feature_array)
+            logger.debug('pca: keeping {:d} of {:d} components'.format(pca.n_components_, nfeats))
 
         logger.debug(indent('combined {n:d} features into pruned array of shape: {shape:s}'.format(
             n=pruned_feature_array.shape[1],
@@ -362,6 +370,8 @@ def DOICluster(doi_list, local_feature_defs, nclusters=20, recluster=False):
 
         # load dicom data
         image_vol = doi.getImageVolume()
+        # print('image_vol_modality: {!s}'.format(image_vol.modality))
+        # print('image_vol_feature_label: {!s}'.format(image_vol.feature_label))
         roi = doi.getROI()
         if (not image_vol or not roi):
             # print('missing ct or roi. skipping.')
@@ -381,7 +391,7 @@ def DOICluster(doi_list, local_feature_defs, nclusters=20, recluster=False):
 
     # create feature matrix for clustering from feature volume list (pruning is handled automatically)
     (pruned_feature_array, frameofreference, \
-        full_feature_array, feat_column_labels) = create_feature_matrix(feature_volume_list, roi)
+        full_feature_array, feat_column_labels) = create_feature_matrix(feature_volume_list, roi, PCA=True)
 
     # Cluster and create cluster volume then pickle it
     pruned_cluster_vector = cluster_kmeans(pruned_feature_array, nclusters, njobs=1)
