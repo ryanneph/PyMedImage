@@ -25,6 +25,10 @@ class RescaleParams:
         self.scale = scale
         self.offset = offset
 
+    def __repr__(self):
+        return 'scale:  {:g}\n'.format(self.scale) + \
+               'offset: {:g}'.format(self.offset)
+
 
 class FrameOfReference:
     """Defines a dicom frame of reference to which BaseVolumes can be conformed for fusion of pre-registered
@@ -49,7 +53,7 @@ class FrameOfReference:
         self.size = size
         self.UID = UID
 
-    def __str__(self):
+    def __repr__(self):
         return 'FrameOfReference:\n' + \
                'start   <mm> (x,y,z): ({:0.3f}, {:0.3f}, {:0.3f})\n'.format(*self.start) + \
                'spacing <mm> (x,y,z): ({:0.3f}, {:0.3f}, {:0.3f})\n'.format(*self.spacing) + \
@@ -104,7 +108,9 @@ class ROI:
         """
         self.roinumber = structuresetroi.ROINumber
         self.refforuid = structuresetroi.ReferencedFrameOfReferenceUID
+        self.frameofreference = None
         self.roiname = structuresetroi.ROIName
+        self.coordslices = None
         # Cached variables
         self.__cache_densemask = None   # storage for BaseVolume when consecutive calls to
                                         # makeDenseMask are made
@@ -132,6 +138,11 @@ class ROI:
                 self.frameofreference = frameofreference
             else:
                 self.frameofreference = self.getROIExtents()
+
+    def __repr__(self):
+        return '{!s}\n'.format(type(self)) + \
+               'roiname: {!s}\n'.format(self.roiname) + \
+               '[FrameOfReference]:\n{!s}'.format(self.frameofreference)
 
     @staticmethod
     def _loadRtstructDicom(rtstruct_path):
@@ -323,7 +334,7 @@ class ROI:
                 maskslicearray_list.append(densemaskslice.reshape((1, *densemaskslice.shape)))
 
             # construct BaseVolume from dense slice arrays
-            densemask = BaseVolume().fromArray(np.concatenate(maskslicearray_list, axis=0), frameofreference)
+            densemask = BaseVolume.fromArray(np.concatenate(maskslicearray_list, axis=0), frameofreference)
             self.__cache_densemask = densemask
             return densemask
 
@@ -424,6 +435,13 @@ class BaseVolume:
         self.rescaleparams = None
         self.modality = None
         self.feature_label = None
+
+    def __repr__(self):
+        return '{!s}\n'.format(type(self)) + \
+               'modality: {!s}\n'.format(self.modality) + \
+               'feature_label: {!s}\n'.format(self.feature_label) + \
+               '[FrameOfReference]:\n{!s}\n'.format(self.frameofreference) + \
+               '[RescaleParams]:\n{!s}'.format(self.rescaleparams)
 
     # CONSTRUCTOR METHODS
     @classmethod
