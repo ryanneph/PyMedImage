@@ -52,6 +52,14 @@ def calculateFeature(doi, local_feature_def, loadprecalculated=False):
     Returns:
         int: status code
     """
+    # load dicom data
+    vol = doi.getImageVolume()
+    if vol is None:
+        return 1, None
+
+    # force stat based GLCM quantization if not CT image
+    local_feature_def = quantization.enforceGLCMQuantizationMode(local_feature_def, vol.modality)
+
     recalculated = False
     if checkCalculated(doi, local_feature_def):
         if (local_feature_def.recalculate):
@@ -63,19 +71,14 @@ def calculateFeature(doi, local_feature_def, loadprecalculated=False):
             else: loaded_feature_vol = None
             return (10, loaded_feature_vol)
 
-    # load dicom data
-    ct_vol = doi.getImageVolume()
     roi = doi.getROI()
-    if (not ct_vol or not roi):
+    if (not vol or not roi):
         logger.debug('missing ct or roi. skipping.')
         return (1, None)
 
-    # force stat based GLCM quantization if not CT image
-    quantization.enforceGLCMQuantizationMode(local_feature_def, ct_vol.modality)
-
     # compute feature
     logger.debug('calculating "{!s}" for doi: {!s}'.format(local_feature_def.label, doi))
-    feature_vol = local_feature_def.calculation_function(ct_vol, roi, **local_feature_def.args)
+    feature_vol = local_feature_def.calculation_function(vol, roi, **local_feature_def.args)
     feature_vol.feature_label = local_feature_def.generateFeatureLabel()
 
     # return status
@@ -85,6 +88,14 @@ def calculateFeature(doi, local_feature_def, loadprecalculated=False):
         return (0, feature_vol)
 
 def calculateCompositeFeature(doi, composite_feature_def, pickleintermediate=False, loadprecalculated=False):
+    # try to load image volume
+    vol = doi.getImageVolume()
+    if vol is None:
+        return 1, None
+
+    # force stat based GLCM quantization if not CT image
+    composite_feature_def = quantization.enforceGLCMQuantizationMode(composite_feature_def, vol.modality)
+
     recalculated = False
     if checkCalculated(doi, composite_feature_def):
         if (composite_feature_def.recalculate):
@@ -108,8 +119,6 @@ def calculateCompositeFeature(doi, composite_feature_def, pickleintermediate=Fal
     if len(vol_list) <= 0:
         return 3, None
 
-    # force stat based GLCM quantization if not CT image
-    quantization.enforceGLCMQuantizationMode(composite_feature_def, vol_list[0].modality)
     composite_vol = composite_feature_def.composition_function(vol_list)
     composite_vol.feature_label = composite_feature_def.generateFeatureLabel()
 

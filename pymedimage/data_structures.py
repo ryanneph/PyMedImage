@@ -51,6 +51,7 @@ class WritableFeatureDefinition:
         self.args = OrderedDict()
         self.recalculate = recalculate
 
+
     def addArg(self, key, value):
         """abstracts away the complexities of initializing an ordereddict with lists of tuples..."""
         self.args[key] = value
@@ -156,6 +157,7 @@ class WritableFeatureDefinition:
                     logger.debug('  {:s}'.format(m))
             else:
                 logger.debug('no matches found')
+                # logger.debug('all possibles:\n{!s}'.format('\n'.join(['  {!s}'.format(x) for x in files_list])))
                 return None
 
             return matches
@@ -178,6 +180,11 @@ class LocalFeatureDefinition(WritableFeatureDefinition):
         super().__init__(label, recalculate)
         self.calculation_function = calculation_function
 
+    def copy(self):
+        new = LocalFeatureDefinition(self.label, self.calculation_function, self.recalculate)
+        new.args = self.args.copy()
+        return new
+
 
 class LocalFeatureCompositionDefinition(WritableFeatureDefinition):
     """Used to define a composite of a list of functions to be applied at each patch location within a full image iterator"""
@@ -197,6 +204,14 @@ class LocalFeatureCompositionDefinition(WritableFeatureDefinition):
     def addLocalFeatureDefinition(self, featdef):
         """abstracts away the complexities of initializing an ordereddict with lists of tuples..."""
         self.featdefs.append(featdef)
+
+    def copy(self):
+        new = LocalFeatureCompositionDefinition(self.label, self.composition_function, self.recalculate)
+        new.args = self.args.copy()
+        new.featdefs = []
+        for f in self.featdefs:
+            new.featdefs.append(f.copy())
+        return new
 
 class FeatureList():
     def __init__(self, feature_def_list=None):

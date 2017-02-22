@@ -7,7 +7,7 @@ import time
 import pickle
 from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA as sklearnPCA
+from sklearn.decomposition import SparsePCA as sklearnPCA
 import scipy.cluster.hierarchy as sch
 import numpy as np
 from .misc import indent, g_indents, generate_heatmap_label
@@ -130,6 +130,8 @@ def create_feature_matrix(feature_volumes, roi=None, PCA=False):
                     highest_res = res
             # assign highest res FOR as common shape
             frameofreference = highest_res_volume.frameofreference
+            #OVERRIDE for COMMON RESOLUTION
+            frameofreference.spacing = (1, 1, 1)
 
         # take the selected FORs shape to be the reference
         ref_shape = frameofreference.size[::-1]  # reverses tuple from (x,y,z) to (z,y,x)
@@ -171,10 +173,11 @@ def create_feature_matrix(feature_volumes, roi=None, PCA=False):
 
         # dimensionality reduction
         if PCA:
-            pca = sklearnPCA(whiten=True, n_components=None)
+            pca = sklearnPCA()  # sparsePCA
+            # pca = sklearnPCA(whiten=True, n_components=None)  # standard PCA
             nfeats = pruned_feature_array.shape[1]
             pruned_feature_array = pca.fit_transform(pruned_feature_array)
-            logger.debug('pca: keeping {:d} of {:d} components'.format(pca.n_components_, nfeats))
+            logger.debug('pca: keeping {:d} of {:d} components'.format(pca.n_components, nfeats))
 
         logger.debug(indent('combined {n:d} features into pruned array of shape: {shape:s}'.format(
             n=pruned_feature_array.shape[1],
@@ -358,7 +361,7 @@ def DOICluster(doi_list, local_feature_defs, nclusters=20, recluster=False):
     for doi in doi_list:
         # generate doi specific paths
         p_doi_features = doi.getFeaturesPath()
-        p_doi_clusters = os.path.join(doi.p_CLUSTERS, str(doi))
+        p_doi_clusters = os.path.join(doi.p_CLUSTERS, doi.doi)
         p_clusters_l1_pickle = doi.getClusterL1PicklePath()
 
         # check for existing cluster
@@ -382,12 +385,12 @@ def DOICluster(doi_list, local_feature_defs, nclusters=20, recluster=False):
         # load feature volumes
         for feature_def in local_feature_defs:
             # force stat based GLCM quantization if not CT image
-            quantization.enforceGLCMQuantizationMode(feature_def, image_vol.modality)
+            trimmed_feature_def = quantization.enforceGLCMQuantizationMode(feature_def, image_vol.modality)
 
             # import features and append to feature volume list
-            matches = feature_def.findFiles(p_doi_features)
+            matches = trimmed_feature_def.findFiles(p_doi_features)
             if not matches:
-                message = 'Feature file couldn\'t be found: {!s}'.format(feature_def.generateFilename())
+                message = 'Feature file couldn\'t be found: {!s}'.format(trimmed_feature_def.generateFilename())
                 logger.error(message)
                 return 1
 
@@ -395,7 +398,7 @@ def DOICluster(doi_list, local_feature_defs, nclusters=20, recluster=False):
 
     # create feature matrix for clustering from feature volume list (pruning is handled automatically)
     (pruned_feature_array, frameofreference, \
-        full_feature_array, feat_column_labels) = create_feature_matrix(feature_volume_list, roi, PCA=True)
+        full_feature_array, feat_column_labels) = create_feature_matrix(feature_volume_list, roi, PCA=False)
 
     # Cluster and create cluster volume then pickle it
     pruned_cluster_vector = cluster_kmeans(pruned_feature_array, nclusters, njobs=1)
