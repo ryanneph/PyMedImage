@@ -13,6 +13,7 @@ import numpy as np
 from .misc import indent, g_indents, generate_heatmap_label
 from .rttypes import MaskableVolume
 from .multiprocess_manager import MultiprocessManager
+from . import quantization
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -380,6 +381,9 @@ def DOICluster(doi_list, local_feature_defs, nclusters=20, recluster=False):
 
         # load feature volumes
         for feature_def in local_feature_defs:
+            # force stat based GLCM quantization if not CT image
+            quantization.enforceGLCMQuantizationMode(feature_def, image_vol.modality)
+
             # import features and append to feature volume list
             matches = feature_def.findFiles(p_doi_features)
             if not matches:

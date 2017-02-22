@@ -4,6 +4,7 @@ import logging
 import math
 import numpy as np
 from .rttypes import MaskableVolume
+from .quantization import QMODE_STAT, QMODE_FIXEDHU
 import gc
 import pycuda
 import pycuda.tools
@@ -81,8 +82,6 @@ def elementwiseMean_gpu(feature_volume_list):
 ####################################################################################################
 # INDIVIDUAL FEATURES
 ####################################################################################################
-QMODE_FIXEDHU = 0
-QMODE_STAT = 1
 def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwidth=None, dx=1, dy=0, dz=0, ndev=2,
              feature_kernel='glcm_plugin_gpu', stat_name='glcm_stat_contrast_gpu'):
     """Uses PyCuda to parallelize the computation of the voxel-wise image entropy using a variable \
