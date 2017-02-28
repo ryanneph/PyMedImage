@@ -7,7 +7,7 @@ import time
 import pickle
 from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import SparsePCA as sklearnPCA
+from sklearn.decomposition import PCA as sklearnPCA
 import scipy.cluster.hierarchy as sch
 import numpy as np
 from .misc import indent, g_indents, generate_heatmap_label
@@ -173,11 +173,10 @@ def create_feature_matrix(feature_volumes, roi=None, PCA=False):
 
         # dimensionality reduction
         if PCA:
-            pca = sklearnPCA()  # sparsePCA
-            # pca = sklearnPCA(whiten=True, n_components=None)  # standard PCA
+            pca = sklearnPCA(whiten=True, n_components=None)  # standard PCA
             nfeats = pruned_feature_array.shape[1]
             pruned_feature_array = pca.fit_transform(pruned_feature_array)
-            logger.debug('pca: keeping {:d} of {:d} components'.format(pca.n_components, nfeats))
+            # logger.debug('pca: keeping {:d} of {:d} components'.format(pca.n_components, nfeats))
 
         logger.debug(indent('combined {n:d} features into pruned array of shape: {shape:s}'.format(
             n=pruned_feature_array.shape[1],
@@ -398,7 +397,7 @@ def DOICluster(doi_list, local_feature_defs, nclusters=20, recluster=False):
 
     # create feature matrix for clustering from feature volume list (pruning is handled automatically)
     (pruned_feature_array, frameofreference, \
-        full_feature_array, feat_column_labels) = create_feature_matrix(feature_volume_list, roi, PCA=False)
+        full_feature_array, feat_column_labels) = create_feature_matrix(feature_volume_list, roi, PCA=True)
 
     # Cluster and create cluster volume then pickle it
     pruned_cluster_vector = cluster_kmeans(pruned_feature_array, nclusters, njobs=1)

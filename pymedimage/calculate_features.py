@@ -171,7 +171,7 @@ def worker_calculateFeature(args_tuple):
 
 def logstringgenerator_calculateFeature(worker_results):
     (result_code, result_string, job_time_string, doi, local_feature_def) = worker_results
-    log_string = '[{string:12s}:{code:2d}]: {doi!s:9s}  {label!s:25s}  {args!s:45s}  {time!s}'.format(
+    log_string = '[{string:12s}:{code:2d}]: {doi!s:9s}  {label!s:30s}  {args!s:45s}  {time!s}'.format(
         string  = result_string,
         code    = result_code,
         doi     = doi,

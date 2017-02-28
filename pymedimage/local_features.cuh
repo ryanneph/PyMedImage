@@ -11,6 +11,8 @@
 #define FIXED_START    $FIXED_START
 #define NBINS          $NBINS
 #define GLCM_SIZE      NBINS*NBINS
+#define MAXRUNLENGTH   $MAXRUNLENGTH
+#define GLRLM_SIZE      NBINS*MAXRUNLENGTH
 #define NDEV           $NDEV
 #define DX             $DX
 #define DY             $DY
@@ -18,6 +20,9 @@
 
 #include "math.h"
 #include <stdio.h>
+
+// arbitrarily small number used to alleviate log(0) errors as log(0+eps)
+__device__ float eps = 1e-16;
 
 /* FORWARD DECLARATIONS */
 __device__ float mean_plugin_gpu(float *array);
@@ -107,7 +112,7 @@ __device__ float entropy_plugin_gpu(float *patch_array) {
     // calculate local entropy
     float stat = 0.0f;
     for (int i=0; i<NBINS; i++) {
-        stat -= ((float)hist[i]/size) * (logf(((float)hist[i]/size) + 1e-9));
+        stat -= ((float)hist[i]/size) * (logf(((float)hist[i]/size) + eps));
     }
     return stat;
 }
@@ -333,7 +338,7 @@ __device__ void glcm_matrix_gpu(float *mat, float *array) {
     int dz = DZ;
 
     int patch_size_1d = (RADIUS*2+1);
-    int patch_size_2d = pow(patch_size_1d, 2);
+    int patch_size_2d = powf(patch_size_1d, 2);
     for (int i=0; i<PATCH_SIZE; i++) {
         int z = i / patch_size_2d;
         int y = (i - patch_size_2d*z) / patch_size_1d;
@@ -378,14 +383,13 @@ __device__ void glcm_matrix_gpu(float *mat, float *array) {
     }
 }
 
-
 __device__ float glcm_stat_contrast_gpu(float* glcm_mat) {
     // calculate statistic on glcm matrix of size NBINS*NBINS
     float accum = 0;
     for (int i=0; i<GLCM_SIZE; i++) {
         int y = rn::glcm_getY(i);
         int x = rn::glcm_getX(i);
-        accum += glcm_mat[i] * pow(y-x, 2);
+        accum += glcm_mat[i] * powf(y-x, 2);
         //if (threadIdx.x == 10 && blockIdx.x == 2) {
         //    printf("y:%d x:%d accum:%f\\n", y, x, accum);
         //}
@@ -409,7 +413,7 @@ __device__ float glcm_stat_energy_gpu(float* glcm_mat) {
     // calculate statistic on glcm matrix of size NBINS*NBINS
     float accum = 0;
     for (int i=0; i<GLCM_SIZE; i++) {
-        accum += pow(glcm_mat[i], 2);
+        accum += powf(glcm_mat[i], 2);
         //if (threadIdx.x == 10 && blockIdx.x == 2) {
         //    printf("y:%d x:%d accum:%f\\n", y, x, accum);
         //}
@@ -422,7 +426,7 @@ __device__ float glcm_stat_homogeneity_gpu(float* glcm_mat) {
     for (int i=0; i<GLCM_SIZE; i++) {
         int y = rn::glcm_getY(i);
         int x = rn::glcm_getX(i);
-        accum += glcm_mat[i] / (1 + pow(y-x, 2));
+        accum += glcm_mat[i] / (1 + powf(y-x, 2));
         //if (threadIdx.x == 10 && blockIdx.x == 2) {
             //printf("y:%d x:%d accum:%f\\n", y, x, accum);
         //}
@@ -489,7 +493,7 @@ __device__ float glcm_stat_sumentropy_gpu(float* glcm_mat) {
     float accum = 0;
     for (int k=0; k<=NBINS*2-2; k++) {
         float val = rn::glcm_marginal_Pxplusy(glcm_mat, k);
-        accum -= val * logf(val+1e-12);
+        accum -= val * logf(val+eps);
     }
     return accum;
 }
@@ -497,7 +501,7 @@ __device__ float glcm_stat_differenceentropy_gpu(float* glcm_mat) {
     float accum = 0;
     for (int k=0; k<NBINS; k++) {
         float val = rn::glcm_marginal_Pxminusy(glcm_mat, k);
-        accum -= val * logf(val+1e-12);
+        accum -= val * logf(val+eps);
     }
     return accum;
 }
@@ -505,14 +509,244 @@ __device__ float glcm_stat_entropy_gpu(float* glcm_mat) {
     float accum = 0;
     for (int i=0; i<GLCM_SIZE; i++) {
         float val = glcm_mat[i];
-        accum -= val * log2f(val+1e-12);
+        accum -= val * log2f(val+eps);
     }
     return accum;
 }
 
 
+/* GLRLM FEATURES */
+namespace rn {
+    inline __device__ unsigned int glrlm_getY(unsigned int idx) {
+        return (idx / MAXRUNLENGTH);
+    }
+    inline __device__ unsigned int glrlm_getX(unsigned int idx) {
+        return (idx - glrlm_getY(idx)*MAXRUNLENGTH);
+    }
+    inline __device__ unsigned int glrlm_getIndex(unsigned int x, unsigned int y) {
+        return (MAXRUNLENGTH * y + x);
+    }
+    __device__ float glrlm_sumP(float *glrlm_mat) {
+        float accum = 0.0f;
+        for (int i=0; i<GLRLM_SIZE; i++) {
+            accum += glrlm_mat[i];
+        }
+        return accum;
+    }
+    __device__ float glrlm_sumSqP(float *glrlm_mat) {
+        float accum = 0.0f;
+        for (int i=0; i<GLRLM_SIZE; i++) {
+            accum += powf(glrlm_mat[i], 2);
+        }
+        return accum;
+    }
+}
+__device__ void glrlm_matrix_gpu(float *mat, float *array) {
+    /*
+      run length
+       1  2  3  4  5 ... N
+       --------------------
+    1 |0  3  4  ...
+    2 |1  3  2  ...
+    3 |...
+    ..|
+    Q |
 
+    y-axis: quantization level for run
 
+    for N = patch side-length (max possible run)
+        Q = number of quantization levels
+    */
+
+    // compute glrlm matrix in the specified directions
+    int dx = DX;
+    int dy = DY;
+    int dz = DZ;
+
+    int patch_size_1d = (RADIUS*2+1);
+    int patch_size_2d = powf(patch_size_1d, 2);
+    for (int i=0; i<PATCH_SIZE; i++) {
+        int z = i / patch_size_2d;
+        int y = (i - patch_size_2d*z) / patch_size_1d;
+        int x = i - patch_size_2d*z - patch_size_1d*y;
+        int y_idx = array[i];
+
+        // measure run length from this start point:
+        unsigned int rl = 1;
+        for (int j=0; j<MAXRUNLENGTH+1; j++) {
+            // update query position
+            z += dz;
+            y += dy;
+            x += dx;
+            unsigned int q = patch_size_2d*z + patch_size_1d*y + x;
+            if (q >= PATCH_SIZE) {break;} // out of bounds
+            if (array[q] == y_idx) {
+                rl++;
+                array[q] = -1; // don't use as start point, any member of a previously counted run
+            } else {break;} // run is broken
+        }
+        int x_idx = rl;
+
+        int mat_idx = MAXRUNLENGTH * y_idx + x_idx;
+        mat[mat_idx] += 1.0f;
+    }
+}
+__device__ void glrlm_normalize_matrix(float *norm_mat, float *mat) {
+    /* normalize probabilities */
+    unsigned int ncounts = 0;
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        ncounts += mat[i];
+    }
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        norm_mat[i] = mat[i]/ncounts;
+    }
+}
+__device__ float glrlm_stat_sre_gpu(float* glrlm_mat) {
+    // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
+    float accum = 0.0f;
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        accum += glrlm_mat[i]/powf(rn::glrlm_getX(i)+1, 2);
+    }
+    return accum/rn::glrlm_sumP(glrlm_mat);
+}
+__device__ float glrlm_stat_lre_gpu(float* glrlm_mat) {
+    // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
+    float accum = 0.0f;
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        accum += glrlm_mat[i]*powf(rn::glrlm_getX(i)+1, 2);
+    }
+    return accum/rn::glrlm_sumP(glrlm_mat);
+}
+__device__ float glrlm_stat_gln_gpu(float* glrlm_mat) {
+    // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
+    float accum = 0.0f;
+    for (int y=0; y<NBINS; y++) {
+        float subaccum = 0.0f;
+        for (int x=0; x<MAXRUNLENGTH; x++) {
+            subaccum += glrlm_mat[rn::glrlm_getIndex(x, y)];
+        }
+        accum += powf(subaccum, 2);
+    }
+    return accum/rn::glrlm_sumP(glrlm_mat);
+}
+__device__ float glrlm_stat_glnn_gpu(float* glrlm_mat) {
+    // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
+    float accum = 0.0f;
+    for (int y=0; y<NBINS; y++) {
+        float subaccum = 0;
+        for (int x=0; x<MAXRUNLENGTH; x++) {
+            subaccum += glrlm_mat[rn::glrlm_getIndex(x, y)];
+        }
+        accum += powf(subaccum, 2);
+    }
+    return accum/rn::glrlm_sumSqP(glrlm_mat);
+}
+__device__ float glrlm_stat_rln_gpu(float* glrlm_mat) {
+    // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
+    float accum = 0.0f;
+    for (int x=0; x<MAXRUNLENGTH; x++) {
+        float subaccum = 0.0f;
+        for (int y=0; y<NBINS; y++) {
+            subaccum += glrlm_mat[rn::glrlm_getIndex(x, y)];
+        }
+        accum += powf(subaccum, 2);
+    }
+    return accum/rn::glrlm_sumP(glrlm_mat);
+}
+__device__ float glrlm_stat_rlnn_gpu(float* glrlm_mat) {
+    // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
+    float accum = 0.0f;
+    for (int x=0; x<MAXRUNLENGTH; x++) {
+        float subaccum = 0;
+        for (int y=0; y<NBINS; y++) {
+            subaccum += glrlm_mat[rn::glrlm_getIndex(x, y)];
+        }
+        accum += powf(subaccum, 2);
+    }
+    return accum/rn::glrlm_sumSqP(glrlm_mat);
+}
+__device__ float glrlm_stat_rp_gpu(float* glrlm_mat) {
+    // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
+    float accum = rn::glrlm_sumP(glrlm_mat);
+    return accum/PATCH_SIZE;
+}
+__device__ float glrlm_stat_glv_gpu(float* glrlm_mat) {
+    float norm_mat[GLRLM_SIZE];
+    glrlm_normalize_matrix(norm_mat, glrlm_mat);
+    float accum = 0.0f;
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        float subaccum = 0.0f;
+        for (int j=0; j<GLRLM_SIZE; j++) {
+            subaccum += norm_mat[i]*(rn::glrlm_getY(j)+1);
+        }
+        accum += norm_mat[i]*powf(rn::glrlm_getY(i)+1-subaccum, 2);
+    }
+    return accum;
+}
+__device__ float glrlm_stat_rv_gpu(float* glrlm_mat) {
+    float norm_mat[GLRLM_SIZE];
+    glrlm_normalize_matrix(norm_mat, glrlm_mat);
+    float accum = 0.0f;
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        float subaccum = 0.0f;
+        for (int j=0; j<GLRLM_SIZE; j++) {
+            subaccum += norm_mat[i]*(rn::glrlm_getX(j)+1);
+        }
+        accum += norm_mat[i]*powf(rn::glrlm_getX(i)+1-subaccum, 2);
+    }
+    return accum;
+}
+__device__ float glrlm_stat_re_gpu(float* glrlm_mat) {
+    float norm_mat[GLRLM_SIZE];
+    glrlm_normalize_matrix(norm_mat, glrlm_mat);
+    float accum = 0.0f;
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        accum -= norm_mat[i]*log2f(norm_mat[i]+eps);
+    }
+    return accum;
+}
+__device__ float glrlm_stat_lglre_gpu(float* glrlm_mat) {
+    float accum = 0.0f;
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        accum += glrlm_mat[i]/powf(rn::glrlm_getY(i)+1, 2);
+    }
+    return accum/rn::glrlm_sumP(glrlm_mat);
+}
+__device__ float glrlm_stat_hglre_gpu(float* glrlm_mat) {
+    float accum = 0.0f;
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        accum += glrlm_mat[i]*powf(rn::glrlm_getY(i)+1, 2);
+    }
+    return accum/rn::glrlm_sumP(glrlm_mat);
+}
+__device__ float glrlm_stat_srlgle_gpu(float* glrlm_mat) {
+    float accum = 0.0f;
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        accum += glrlm_mat[i]/powf(rn::glrlm_getY(i)+1 + rn::glrlm_getX(i)+1, 2);
+    }
+    return accum/rn::glrlm_sumP(glrlm_mat);
+}
+__device__ float glrlm_stat_srhgle_gpu(float* glrlm_mat) {
+    float accum = 0.0f;
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        accum += glrlm_mat[i]*powf(rn::glrlm_getY(i)+1, 2)/powf(rn::glrlm_getX(i)+1, 2);
+    }
+    return accum/rn::glrlm_sumP(glrlm_mat);
+}
+__device__ float glrlm_stat_lrlglre_gpu(float* glrlm_mat) {
+    float accum = 0.0f;
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        accum += glrlm_mat[i]*powf(rn::glrlm_getX(i)+1, 2)/powf(rn::glrlm_getY(i)+1, 2);
+    }
+    return accum/rn::glrlm_sumP(glrlm_mat);
+}
+__device__ float glrlm_stat_lrhglre_gpu(float* glrlm_mat) {
+    float accum = 0.0f;
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        accum += glrlm_mat[i]*powf(rn::glrlm_getY(i)+1 + rn::glrlm_getX(i)+1, 2);
+    }
+    return accum/rn::glrlm_sumP(glrlm_mat);
+}
 
 
 __device__ float glcm_plugin_gpu(float *patch_array) {
@@ -525,6 +759,22 @@ __device__ float glcm_plugin_gpu(float *patch_array) {
         mat[i] = 0.0f;
     }
     glcm_matrix_gpu(mat, patch_array);
+
+    // compute matrix statistic
+    float stat = ${STAT}(mat);
+
+    return stat;
+}
+__device__ float glrlm_plugin_gpu(float *patch_array) {
+    // quantize patch
+    quantize_gpu(patch_array);
+
+    // compute glcm matrix
+    float mat[GLRLM_SIZE];
+    for (int i=0; i<GLRLM_SIZE; i++) {
+        mat[i] = 0.0f;
+    }
+    glrlm_matrix_gpu(mat, patch_array);
 
     // compute matrix statistic
     float stat = ${STAT}(mat);

@@ -21,7 +21,7 @@ NVDEVICE = 1
 logger = logging.getLogger(__name__)
 
 ####################################################################################################
-# FEATURE COMPOSITIONS
+# LOCAL FEATURE COMPOSITIONS
 ####################################################################################################
 def elementwiseMean_gpu(feature_volume_list):
     """computes the elementwise mean of the like-shaped volumes in feature_volume_list"""
@@ -80,7 +80,7 @@ def elementwiseMean_gpu(feature_volume_list):
 
 
 ####################################################################################################
-# INDIVIDUAL FEATURES
+# LOCAL FEATURE ACCESSOR
 ####################################################################################################
 def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwidth=None, dx=1, dy=0, dz=0, ndev=2,
              feature_kernel='glcm_plugin_gpu', stat_name='glcm_stat_contrast_gpu'):
@@ -158,13 +158,17 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwi
                                             'FIXED_BINWIDTH': binwidth,
                                             'FIXED_START': fixed_start,
                                             'NBINS': nbins,
+                                            'MAXRUNLENGTH': math.floor(math.sqrt(2*(radius*2+1)*(radius*2+1) + (z_radius*2+1))),
                                             'DX': dx,
                                             'DY': dy,
                                             'DZ': dz,
                                             'NDEV': ndev,
                                             'KERNEL': feature_kernel,
                                             'STAT': stat_name})
-    mod2 = SourceModule(cuda_source)
+    mod2 = SourceModule(cuda_source,
+                        options=['-I {!s}'.format(parent_dir),
+                                #'-g', '-G', '-lineinfo'
+                                ])
     func = mod2.get_function('image_iterator_gpu')
 
     # allocate image on device in global memory

@@ -207,7 +207,6 @@ def image_iterator(processing_function, image_volume, radius=2, roi=None):
     # else:
     return feature_volume
 
-
 def energy_plugin(patch_vals):
     val_counts = {}
 
