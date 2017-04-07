@@ -20,9 +20,9 @@ class DOIBase:
     def __init__(self, doi):
         self.doi = doi
 
-    @abstractmethod
-    def getDicomDataPath(self):
-        pass
+    # @abstractmethod
+    # def getDicomDataPath(self):
+    #     pass
 
     @abstractmethod
     def getImageVolume(self):

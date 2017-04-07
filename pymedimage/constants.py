@@ -1,4 +1,4 @@
-"""axes.py
+"""constants.py
 
 constants for patient axis specifications
     Uses depth-row major ordering:
@@ -6,6 +6,7 @@ constants for patient axis specifications
         axis=1 -> rows: coronal slices anterior->posterior
         axis=2 -> cols: sagittal slices: pt.right->pt.left
 """
-AXIAL = 0
-CORONAL = 1
-SAGITTAL = 2
+class Axes:
+    AXIAL = 0
+    CORONAL = 1
+    SAGITTAL = 2

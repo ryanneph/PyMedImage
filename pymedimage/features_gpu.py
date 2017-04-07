@@ -83,6 +83,7 @@ def elementwiseMean_gpu(feature_volume_list):
 # LOCAL FEATURE ACCESSOR
 ####################################################################################################
 def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwidth=None, dx=1, dy=0, dz=0, ndev=2,
+                       cadd=(0,0,0), sadd=3, csub=(0,0,0), ssub=3, i=0,
              feature_kernel='glcm_plugin_gpu', stat_name='glcm_stat_contrast_gpu'):
     """Uses PyCuda to parallelize the computation of the voxel-wise image entropy using a variable \
             neighborhood radius
@@ -97,6 +98,8 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwi
     parent_dir = os.path.dirname(os.path.realpath(__file__))
     with open(os.path.join(parent_dir, 'local_features.cuh'), mode='r') as f:
         cuda_template = Template(f.read())
+
+    roimask = None
     if isinstance(image_volume, np.ndarray):
         toBaseVolume = False
         logger.debug('recognized as an np.ndarray')
@@ -107,14 +110,14 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwi
         image = image_volume.flatten()
         # # use stat based GLCM quantization
         # quantize_mode=QMODE_STAT
-
-        roimask = None
-
     else:
         toBaseVolume = True
         logger.debug('recognized as a BaseVolume')
-        image = image_volume.conformTo(roi.frameofreference).vectorize()
-        d, r, c = roi.frameofreference.size[::-1]
+        image = image_volume
+        if roi:
+            image = image.conformTo(roi.frameofreference)
+        d, r, c = image.frameofreference.size[::-1]
+        image = image.vectorize()
         # if not image_volume.modality.lower() == 'ct':
         #     # use stat based GLCM quantization
         #     quantize_mode=QMODE_STAT
@@ -130,7 +133,8 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwi
         z_radius = radius
 
     # enforce quantization mode selection
-    fixed_start, fixed_end = -150, 350
+    # fixed_start, fixed_end = -150, 350
+    fixed_start, fixed_end = -175, 75
     if gray_levels and binwidth:
         logger.exception('must exclusively specify "binwidth" or "gray_levels" to select glcm quantization mode')
     elif binwidth:
@@ -148,6 +152,8 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwi
         gray_levels = -1
         binwidth = -1
 
+    maxrunlength = math.ceil(math.sqrt(2*(radius*2+1)*(radius*2+1) + (z_radius*2+1)))
+
     cuda_source = cuda_template.substitute({'RADIUS': radius,
                                             'Z_RADIUS': z_radius,
                                             'IMAGE_DEPTH': d,
@@ -158,16 +164,24 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwi
                                             'FIXED_BINWIDTH': binwidth,
                                             'FIXED_START': fixed_start,
                                             'NBINS': nbins,
-                                            'MAXRUNLENGTH': math.floor(math.sqrt(2*(radius*2+1)*(radius*2+1) + (z_radius*2+1))),
+                                            'MAXRUNLENGTH': maxrunlength,
                                             'DX': dx,
                                             'DY': dy,
                                             'DZ': dz,
                                             'NDEV': ndev,
+                                            'CADD_X': cadd[0],
+                                            'CADD_Y': cadd[1],
+                                            'CADD_Z': cadd[2],
+                                            'SADD': sadd,
+                                            'CSUB_X': csub[0],
+                                            'CSUB_Y': csub[1],
+                                            'CSUB_Z': csub[2],
+                                            'SSUB': ssub,
                                             'KERNEL': feature_kernel,
                                             'STAT': stat_name})
     mod2 = SourceModule(cuda_source,
                         options=['-I {!s}'.format(parent_dir),
-                                #'-g', '-G', '-lineinfo'
+                                '-g', '-G', '-lineinfo'
                                 ])
     func = mod2.get_function('image_iterator_gpu')
 
@@ -182,7 +196,7 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwi
     # call device kernel
     blocksize = 256
     gridsize = math.ceil(r*c*d/blocksize)
-    func(image_gpu, result_gpu, block=(blocksize, 1,1), grid=(gridsize, 1,1))
+    func(image_gpu, result_gpu, block=(blocksize, 1, 1), grid=(gridsize, 1, 1))
     # get result from device
     cuda.memcpy_dtoh(result, result_gpu)
 
@@ -207,10 +221,14 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwi
     if d == 1:
         result = result.reshape(r, c)
     elif d>1:
-        result = result.reshape(d,r,c)
+        result = result.reshape(d, r, c)
 
     if toBaseVolume:
-        outvolume = MaskableVolume().fromArray(result, roi.frameofreference)
+        if roi:
+            FOR = roi.frameofreference
+        else:
+            FOR = image_volume.frameofreference
+        outvolume = MaskableVolume().fromArray(result, FOR)
         outvolume.modality = image_volume.modality
         return outvolume
     else:

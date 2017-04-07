@@ -71,9 +71,12 @@ def calculateFeature(doi, local_feature_def, loadprecalculated=False):
             else: loaded_feature_vol = None
             return (10, loaded_feature_vol)
 
-    roi = doi.getROI()
-    if (not vol or not roi):
-        logger.debug('missing ct or roi. skipping.')
+    try:
+        roi = doi.getROI()
+    except:
+        roi = None
+    if (not vol):
+        logger.debug('missing image data. skipping.')
         return (1, None)
 
     # compute feature

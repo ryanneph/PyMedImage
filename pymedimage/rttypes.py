@@ -3,11 +3,15 @@
 Datatypes for general dicom processing including masking, rescaling, and fusion
 """
 
+import sys
 import os
 import logging
+import math
 import numpy as np
 import dicom  # pydicom
 import pickle
+import scipy.io  # savemat -> save to .mat
+import struct
 import copy
 import warnings
 from PIL import Image, ImageDraw
@@ -59,6 +63,25 @@ class FrameOfReference:
                'spacing <mm> (x,y,z): ({:0.3f}, {:0.3f}, {:0.3f})\n'.format(*self.spacing) + \
                'size    <mm> (x,y,z): ({:d}, {:d}, {:d})'.format(*self.size)
 
+    def __eq__(self, compare):
+        if (self.start   == compare.start and
+            self.spacing == compare.spacing and
+            self.size    == compare.size):
+            return True
+        else: return False
+
+    def changeSpacing(self, new_spacing):
+        """change frameofreference resolution while maintaining same bounding box
+        Changes occur in place, self is returned
+            Args:
+                new_spacing (3-tuple<float>): spacing expressed as (X, Y, Z)
+        """
+        old_spacing = self.spacing
+        old_size = self.size
+        self.spacing = new_spacing
+        self.size = tuple((np.array(old_size) * np.array(old_spacing) / np.array(self.spacing)).astype(int).tolist())
+        return self
+
     def end(self):
         """Calculates the (x,y,z) coordinates of the end of the frame of reference (mm)
         """
@@ -89,7 +112,7 @@ class FrameOfReference:
         """
         indices = []
         for i in range(3):
-            indices.insert(i, int(round((position[i] - self.start[i]) / self.spacing[i] )))
+            indices.insert(i, math.floor(int(round((position[i] - self.start[i]) / self.spacing[i] ))))
 
         return tuple(indices)
 
@@ -97,7 +120,7 @@ class FrameOfReference:
 class ROI:
     """Defines a labeled RTStruct ROI for use in masking and visualization of Radiotherapy contours
     """
-    def __init__(self, frameofreference, roicontour, structuresetroi):
+    def __init__(self, roicontour, structuresetroi):
         """takes FrameOfReference object and roicontour/structuresetroi dicom dataset objects and stores
         sorted contour data
 
@@ -133,11 +156,8 @@ class ROI:
             # sort by slice position in ascending order (inferior -> superior)
             self.coordslices.sort(key=lambda coordslice: coordslice[0][2], reverse=False)
 
-            # if no refframe specified, create one based on the extents of the roi and apparent spacing
-            if (frameofreference is not None):
-                self.frameofreference = frameofreference
-            else:
-                self.frameofreference = self.getROIExtents()
+            # create frameofreference based on the extents of the roi and apparent spacing
+            self.frameofreference = self.getROIExtents()
 
     def __repr__(self):
         return '{!s}\n'.format(type(self)) + \
@@ -197,8 +217,7 @@ class ROI:
             # construct a dict of ROI objects where contour name is key
             roi_dict = {}
             for ROINumber, structuresetroi in StructureSetROI_dict.items():
-                roi_dict[structuresetroi.ROIName] = (cls(frameofreference=None,
-                                                         roicontour=ROIContour_dict[ROINumber],
+                roi_dict[structuresetroi.ROIName] = (cls(roicontour=ROIContour_dict[ROINumber],
                                                          structuresetroi=structuresetroi))
             # prune empty ROIs from dict
             for roiname, roi in dict(roi_dict).items():
@@ -255,16 +274,16 @@ class ROI:
         # get nearest coordslice
         minerror = 5000
         coordslice = None
-        tolerance = zspace
+        ### REVISIT THE CORRECT SETTING OF TOLERANCE TODO
+        tolerance = self.frameofreference.spacing[2]*4 - 1e-9  # if upsampling too much then throw error
         for slice in self.coordslices:
             # for each list of coordinate tuples - check the slice for distance from position
             error = abs(position - slice[0][2])
-            if error < minerror:
+            if error <= minerror:
                 # if minerror != 5000:
                 #     logger.debug('position:{:0.3f} | slicepos:{:0.3f}'.format(position, slice[0][2]))
                 #     logger.debug('improved with error {:f}'.format(error))
                 minerror = error
-            if (error <= minerror):
                 coordslice = slice
                 # logger.debug('updating slice')
             else:
@@ -272,9 +291,16 @@ class ROI:
                 break
 
         # check if our result is actually valid or we just hit the end of the array
-        if minerror >= tolerance:
+        if coordslice and minerror >= tolerance:
             logger.debug('No slice found within {:f} mm of position {:f}'.format(tolerance, position))
+            # print(minerror, tolerance)
+            # print(position)
+            # print(zstart, zspace*depth)
+            # for slice in self.coordslices:
+            #     if abs(slice[0][2]-position) < 100:
+            #         print(slice[0][2])
             return np.zeros((rows, cols))
+            # raise Exception('Attempt to upsample ROI to densearray beyond 5x')
         logger.debug('slice found at {:f} for position query at {:f}'.format(coordslice[0][2], position))
 
         # get coordinate values
@@ -415,6 +441,7 @@ class ROI:
 
     def toPickle(self, pickle_path):
         """convenience function for storing ROI to pickle file"""
+        os.makedirs(os.path.dirname(pickle_path), exist_ok=True)
         with open(pickle_path, 'wb') as p:
             pickle.dump(self, p)
 
@@ -476,22 +503,58 @@ class BaseVolume:
 
         return self
 
+    @classmethod
+    def fromBinary(cls, path, frameofreference):
+        """constructor: takes path to binary file (neylon .raw)
+        data is organized as binary float array in row-major order
+
+        Args:
+            path (str): path to .raw file in binary format
+            frameofreference (FOR): most importantly defines mapping from 1d to 3d array
+        """
+        if not os.path.isfile(path) or os.path.splitext(path)[1].lower() not in ['.raw', '.bin']:
+            raise Exception('data is not formatted properly. must be one of [.raw, .bin]')
+
+        if not isinstance(frameofreference, FrameOfReference):
+            if not isinstance(frameofreference, tuple):
+                raise TypeError('frameofreference must be a valid FrameOfReference or tuple of dimensions')
+            frameofreference = FrameOfReference(start=(0,0,0), spacing=(1,1,1), size=frameofreference)
+
+        with open(path, mode='rb') as f:
+            flat = f.read()
+        _shape = frameofreference.size[::-1]
+        _expected_n = np.product(_shape)
+        _n = int(os.path.getsize(path)/struct.calcsize('f'))
+        if _n != _expected_n:
+            raise Exception('filesize ({:f}) doesn\'t match expected ({:f}) size'.format(
+                os.path.getsize((path)), struct.calcsize('f')*_expected_n
+            ))
+        s = struct.unpack('f'*_n, flat)
+        vol = np.array(s).reshape(_shape)
+        vol[vol>1e10] = 0
+        vol[vol<-1e10] = 0
+        return cls.fromArray(vol, frameofreference)
+
+
     def fromDatasetList(self, dataset_list):
         """constructor: takes a list of dicom slice datasets and builds a BaseVolume array
         Args:
             slices
         """
         if (dataset_list is None):
-            logger.exception('no valid dataset_list provided')
-            raise ValueError
+            raise ValueError('no valid dataset_list provided')
 
         # check that all elements are valid slices, if not remove and continue
         nRemoved = 0
         for i, slice in enumerate(dataset_list):
             if (not isinstance(slice, dicom.dataset.Dataset)):
-                logger.info('invalid type ({t:s}) at idx {i:d}. removing.'.format(
+                logger.debug('invalid type ({t:s}) at idx {i:d}. removing.'.format(
                     t=str(type(slice)),
                     i=i ) )
+                dataset_list.remove(slice)
+                nRemoved += 1
+            elif (len(slice.dir('ImagePositionPatient')) == 0):
+                logger.debug('invalid .dcm image at idx {:d}. removing.'.format(i))
                 dataset_list.remove(slice)
                 nRemoved += 1
         if (nRemoved > 0):
@@ -545,7 +608,10 @@ class BaseVolume:
         if (not os.path.exists(pickle_path)):
             logger.info('file at path: {:s} doesn\'t exists'.format(pickle_path))
         with open(pickle_path, 'rb') as p:
+            # added to fix broken module refs in old pickles
+            sys.modules['utils.rttypes'] = sys.modules[__name__]
             basevolumepickle = pickle.load(p)
+            del sys.modules['utils.rttypes']
 
         # import data to this object
         try:
@@ -571,8 +637,37 @@ class BaseVolume:
         basevolumepickle.modality = self.modality
         basevolumepickle.feature_label = self.feature_label
 
+        os.makedirs(os.path.dirname(pickle_path), exist_ok=True)
         with open(pickle_path, 'wb') as p:
             pickle.dump(basevolumepickle, p)
+
+    def toMatlab(self, path, compress=False):
+        """store critical data to .mat file compatible with matlab loading
+        This is essentially .toPickle() with compat. for matlab reading
+
+        Optional Args:
+            compress (bool): compress dataarray at the cost of write speed
+        """
+        xstr = misc.xstr  # shorter call-name for use in function
+        # first represent as dictionary for savemat()
+        data = {'arraydata':     self.array,
+                'size':          self.frameofreference.size[::-1],
+                'start':         self.frameofreference.start[::-1],
+                'spacing':       self.frameofreference.spacing[::-1],
+                'for_uid':       xstr(self.frameofreference.UID),
+                'modality':      xstr(self.modality),
+                'feature_label': xstr(self.feature_label),
+                'scale':         self.rescaleparams.scale,
+                'offset':        self.rescaleparams.offset,
+                'order':         'ZYX'
+                }
+
+        # strip .mat extension which will be added automatically
+        #  path = path.rstrip('.mat')
+
+        # write to .mat
+        scipy.io.savemat(path, data, appendmat=True, format='5', long_field_names=False,
+                         do_compression=compress, oned_as='row')
 
     # PUBLIC METHODS
     def conformTo(self, frameofreference):
@@ -595,40 +690,44 @@ class BaseVolume:
                 str(type(frameofreference)))))
             raise TypeError
 
-        # crop to active volume of requested FrameOfReference in frameofreference
-        xstart_idx, ystart_idx, zstart_idx = self.frameofreference.getIndices(frameofreference.start)
-        xend_idx, yend_idx, zend_idx = self.frameofreference.getIndices(frameofreference.end())
-        cropped = self.array[zstart_idx:zend_idx, ystart_idx:yend_idx, xstart_idx:xend_idx]
-        logger.debug('original FOR= start:{:s}, spacing:{:s}, size:{:s}'.format(
-                str(self.frameofreference.start),
-                str(self.frameofreference.spacing),
-                str(self.frameofreference.size)))
-        logger.debug('new FOR= start:{:s}, spacing:{:s}, size:{:s}'.format(
-                str(frameofreference.start),
-                str(frameofreference.spacing),
-                str(frameofreference.size)))
-        logger.debug('uncropped shape (z,y,x): {:s}'.format(str(self.array.shape)))
-        logger.debug('cropped shape(z,y,x): {:s}'.format(str(cropped.shape)))
-        logger.debug('frameofreference shape (z,y,x): ({:d}, {:d}, {:d})'.format(frameofreference.size[2],
-                                                           frameofreference.size[1],
-                                                           frameofreference.size[0]))
+        if self.frameofreference == frameofreference:
+            return self
 
-        zoomfactors = []
-        for i in range(3):
-            if (cropped.shape[i] <= 0):
-                logger.exception('request to conform to frame outside of volume\'s frame of reference failed')
-                raise Exception()
-            zoomfactors.insert(i, float(frameofreference.size[2-i]) / cropped.shape[i])
-        zoomfactors = tuple(zoomfactors)
-        logger.debug('zoom factors (z, y, x): ({:0.3f}, {:0.3f}, {:0.3f})'.format(*zoomfactors))
-        resampled_array = interpolation.zoom(cropped, zoomfactors, order=3, mode='constant', cval=0)
+        # first match self resolution to requested resolution
+        zoomarray, zoomFOR = self._resample(frameofreference.spacing)
+
+        # crop to active volume of requested FrameOfReference in frameofreference
+        xstart_idx, ystart_idx, zstart_idx = zoomFOR.getIndices(frameofreference.start)
+        # xend_idx, yend_idx, zend_idx = zoomFOR.getIndices(frameofreference.end())
+        # force new size to match requested FOR size
+        xend_idx, yend_idx, zend_idx = tuple((np.array((xstart_idx, ystart_idx, zstart_idx)) + np.array(frameofreference.size)).tolist())
+        try:
+            cropped = zoomarray[zstart_idx:zend_idx, ystart_idx:yend_idx, xstart_idx:xend_idx]
+            zoomFOR.start = frameofreference.start
+            zoomFOR.size = cropped.shape[::-1]
+        except:
+            logger.exception('request to conform to frame outside of volume\'s frame of reference failed')
+            raise Exception()
 
         # reconstruct volume from resampled array
-        resampled_volume = MaskableVolume.fromArray(resampled_array, frameofreference)
+        resampled_volume = MaskableVolume.fromArray(cropped, zoomFOR)
         resampled_volume.modality = self.modality
         resampled_volume.feature_label = self.feature_label
         resampled_volume.rescaleparams = self.rescaleparams
         return resampled_volume
+
+    def _resample(self, new_voxelsize, order=3):
+        if new_voxelsize == self.frameofreference.spacing:
+            # no need to resample
+            return (self.array, self.frameofreference)
+
+        # voxelsize spec is in order (X,Y,Z) but array is kept in order (Z, Y, X)
+        zoom_factors = np.true_divide(self.frameofreference.spacing, new_voxelsize)[::-1]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            zoomarray = interpolation.zoom(self.array, zoom_factors, order=order, mode='nearest')
+        zoomFOR = FrameOfReference(self.frameofreference.start, new_voxelsize, zoomarray.shape[::-1])
+        return (zoomarray, zoomFOR)
 
     def resample(self, new_voxelsize, order=3):
         """resamples volume to new voxelsize
@@ -637,13 +736,11 @@ class BaseVolume:
             new_voxelsize: 3 tuple of voxel size in mm in the order (X, Y, Z)
 
         """
-        # voxelsize spec is in order (X,Y,Z) but array is kept in order (Z, Y, X)
-        zoom_factors = np.true_divide(self.frameofreference.spacing, new_voxelsize)[::-1]
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            zoomarray = interpolation.zoom(self.array, zoom_factors, order=order, mode='nearest')
-        zoomFOR = FrameOfReference(self.frameofreference.start, new_voxelsize, zoomarray.shape[::-1])
+        zoomarray, zoomFOR = self._resample(new_voxelsize, order)
         new_vol = MaskableVolume.fromArray(zoomarray, zoomFOR)
+        new_vol.modality = self.modality
+        new_vol.feature_label = self.feature_label
+        new_vol.rescaleparams = self.rescaleparams
         return new_vol
 
     def getSlice(self, idx, axis=0, rescale=False, flatten=False):
@@ -782,7 +879,6 @@ class MaskableVolume(BaseVolume):
         copy_vol.feature_label = self.feature_label
         return copy_vol
 
-
     def fromBaseVolume(self, base):
         """promotion constructor that converts baseVolume to MaskableVolume, retaining member variables
 
@@ -846,7 +942,7 @@ class MaskableVolume(BaseVolume):
         return array
 
     def applyMask(self, roi):
-        """Applies roi mask to entire array and stores in self
+        """Applies roi mask to entire array and returns masked copy of class
 
         Args:
             roi -- ROI object that supplies the mask definition

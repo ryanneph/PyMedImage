@@ -12,7 +12,7 @@
 #define NBINS          $NBINS
 #define GLCM_SIZE      NBINS*NBINS
 #define MAXRUNLENGTH   $MAXRUNLENGTH
-#define GLRLM_SIZE      NBINS*MAXRUNLENGTH
+#define GLRLM_SIZE     NBINS*MAXRUNLENGTH
 #define NDEV           $NDEV
 #define DX             $DX
 #define DY             $DY
@@ -20,6 +20,9 @@
 
 #include "math.h"
 #include <stdio.h>
+
+/*#include "local_feature_stats/glcm.h"*/
+/*#include "local_feature_stats/glrm.h"*/
 
 // arbitrarily small number used to alleviate log(0) errors as log(0+eps)
 __device__ float eps = 1e-16;
@@ -275,15 +278,19 @@ namespace rn {
     }
     __device__ float glcm_mean_Px(float* glcm_mat) {
         float accum = 0.0f;
-        for (int i=0; i<NBINS; i++) {
-            accum += (glcm_marginal_Px(glcm_mat, i) * i);
+        for (int i=0; i<GLCM_SIZE; i++) {
+            int y = rn::glcm_getY(i);
+            int x = rn::glcm_getX(i);
+            accum += glcm_mat[i] * y;
         }
         return accum;
     }
     __device__ float glcm_mean_Py(float* glcm_mat) {
         float accum = 0.0f;
-        for (int j=0; j<NBINS; j++) {
-            accum += (glcm_marginal_Py(glcm_mat, j) * j);
+        for (int i=0; i<GLCM_SIZE; i++) {
+            int y = rn::glcm_getY(i);
+            int x = rn::glcm_getX(i);
+            accum += glcm_mat[i] * x;
         }
         return accum;
     }
@@ -749,28 +756,34 @@ __device__ void glrlm_matrix_gpu(float *mat, float *array) {
     int patch_size_1d = (RADIUS*2+1);
     int patch_size_2d = powf(patch_size_1d, 2);
     for (int i=0; i<PATCH_SIZE; i++) {
-        int z = i / patch_size_2d;
-        int y = (i - patch_size_2d*z) / patch_size_1d;
-        int x = i - patch_size_2d*z - patch_size_1d*y;
-        int y_idx = array[i];
+        int z = (int)floorf(i / patch_size_2d);
+        int y = (int)floorf((i - patch_size_2d*z) / patch_size_1d);
+        int x = (int)floorf(i - patch_size_2d*z - patch_size_1d*y);
+        float intensity = array[i];
+        if (intensity < 0){
+            // We are trying to start from a voxel that was previously included in a run, skip this start
+            continue;
+        }
 
         // measure run length from this start point:
         unsigned int rl = 1;
-        for (int j=0; j<MAXRUNLENGTH+1; j++) {
+        for (int j=0; j<MAXRUNLENGTH-2; j++) {
             // update query position
             z += dz;
             y += dy;
             x += dx;
+            if (z>=Z_RADIUS*2+1 || z < 0 ||
+                y>=patch_size_1d || y < 0 ||
+                x>=patch_size_1d || x < 0) { break; }
             unsigned int q = patch_size_2d*z + patch_size_1d*y + x;
-            if (q >= PATCH_SIZE) {break;} // out of bounds
-            if (array[q] == y_idx) {
+            if (array[q] == intensity) {
                 rl++;
                 array[q] = -1; // don't use as start point, any member of a previously counted run
             } else {break;} // run is broken
         }
-        int x_idx = rl;
+        unsigned int x_idx = rl;
 
-        int mat_idx = MAXRUNLENGTH * y_idx + x_idx;
+        int mat_idx = MAXRUNLENGTH * (int)intensity + x_idx;
         mat[mat_idx] += 1.0f;
     }
 }
@@ -929,6 +942,70 @@ __device__ float glrlm_stat_lrhglre_gpu(float* glrlm_mat) {
         accum += glrlm_mat[i]*powf(rn::glrlm_getY(i)+1 + rn::glrlm_getX(i)+1, 2);
     }
     return accum/rn::glrlm_sumP(glrlm_mat);
+}
+
+
+#define CADD_X $CADD_X
+#define CADD_Y $CADD_Y
+#define CADD_Z $CADD_Z
+#define SADD   $SADD
+#define CSUB_X $CSUB_X
+#define CSUB_Y $CSUB_Y
+#define CSUB_Z $CSUB_Z
+#define SSUB   $SSUB
+
+/* HAAR WAVELET FEATURES */
+__device__ float haar_plugin_oneblock_gpu(float *patch_array) {
+    // sum intensities in cube centered at c in patch relative to patch center with "radius" s
+    unsigned int n = 0;
+    float accum = 0.0f;
+    for (int x=0; x<SADD; x++) {
+        for (int y=0; y<SADD; y++) {
+            for (int z=0; z<SADD; z++) {
+                int idx = powf(RADIUS, 2)*(z-SADD-CADD_Z+Z_RADIUS) + (RADIUS*(y-SADD-CADD_Y+RADIUS)) + (x-SADD-CADD_X+RADIUS);
+                if (idx >= 0 && idx < PATCH_SIZE) {
+                    accum += patch_array[idx];
+                    n++;
+                }
+            }
+        }
+    }
+    return (float)(accum/n);
+}
+__device__ float haar_plugin_twoblock_gpu(float *patch_array) {
+    // sum intensities in cube centered at cadd in patch relative to patch center with "radius" sadd
+    // and subtract intensities in cube (csub, ssub)
+    // sum intensities in cube centered at c in patch relative to patch center with "radius" s
+    unsigned int n_add = 0;
+    float accum_add = 0.0f;
+    for (int x=0; x<SADD; x++) {
+        for (int y=0; y<SADD; y++) {
+            for (int z=0; z<SADD; z++) {
+                int idx = powf(RADIUS, 2)*(z-SADD-CADD_Z+Z_RADIUS) + (RADIUS*(y-SADD-CADD_Y+RADIUS)) + (x-SADD-CADD_X+RADIUS);
+                if (idx >= 0 && idx < PATCH_SIZE) {
+                    accum_add += patch_array[idx];
+                    n_add++;
+                }
+            }
+        }
+    }
+    float val_add = (float)(accum_add/n_add);
+
+    unsigned int n_sub = 0;
+    float accum_sub = 0.0f;
+    for (int x=0; x<SSUB; x++) {
+        for (int y=0; y<SSUB; y++) {
+            for (int z=0; z<SSUB; z++) {
+                int idx = powf(RADIUS, 2)*(z-SSUB-CSUB_Z+Z_RADIUS) + (RADIUS*(y-SSUB-CSUB_Y+RADIUS)) + (x-SSUB-CSUB_X+RADIUS);
+                if (idx >= 0 && idx < PATCH_SIZE) {
+                    accum_sub += patch_array[idx];
+                    n_sub++;
+                }
+            }
+        }
+    }
+    float val_sub = (float)(accum_sub/n_sub);
+    return val_add - val_sub;
 }
 
 
