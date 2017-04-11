@@ -441,7 +441,9 @@ class ROI:
 
     def toPickle(self, pickle_path):
         """convenience function for storing ROI to pickle file"""
-        os.makedirs(os.path.dirname(pickle_path), exist_ok=True)
+        _dirname = os.path.dirname(pickle_path)
+        if (_dirname and _dirname is not ''):
+            os.makedirs(_dirname, exist_ok=True)
         with open(pickle_path, 'wb') as p:
             pickle.dump(self, p)
 
@@ -637,9 +639,58 @@ class BaseVolume:
         basevolumepickle.modality = self.modality
         basevolumepickle.feature_label = self.feature_label
 
-        os.makedirs(os.path.dirname(pickle_path), exist_ok=True)
+        _dirname = os.path.dirname(pickle_path)
+        if (_dirname and _dirname is not ''):
+            os.makedirs(_dirname, exist_ok=True)
         with open(pickle_path, 'wb') as p:
             pickle.dump(basevolumepickle, p)
+
+    @classmethod
+    def fromMatlab(cls, path):
+        """restore BaseVolume from .mat file that was created using BaseVolume.toMatlab()
+        """
+        extract_str = misc.numpy_safe_string_from_array
+        data = scipy.io.loadmat(path, appendmat=True)
+        for key, obj in data.items():
+            print('{!s}({!s}: {!s}'.format(key, type(obj), obj))
+        converted_data = {
+            'arraydata': data['arraydata'],
+            'size': tuple(data['size'][0,:])[::-1],
+            'start': tuple(data['start'][0,:])[::-1],
+            'spacing': tuple(data['spacing'][0,:])[::-1],
+            'for_uid': extract_str(data['for_uid']),
+            'modality': extract_str(data['modality']),
+            'feature_label': extract_str(data['feature_label']),
+            'scale': data['scale'].item(),
+            'offset': data['offset'].item(),
+            'order': extract_str(data['order'])
+        }
+        #  print('arraydata.shape: {!s}'.format(data['arraydata'].shape))
+        #  print('')
+        #  print('size: {!s}'.format(tuple(data['size'][0,:])[::-1]))
+        #  print('start: {!s}'.format(tuple(data['start'][0,:])[::-1]))
+        #  print('spacing: {!s}'.format(tuple(data['spacing'][0,:])[::-1]))
+        #  print('feature_label: {!s}'.format(extract_str(data['feature_label'])))
+        #  print('modality: {!s}'.format(extract_str(data['modality'])))
+        #  print('for_uid: {!s}'.format(extract_str(data['for_uid'])))
+        #  print('order: {!s}'.format(extract_str(data['order'])))
+        #  print('scale: {:f}'.format(data['scale'].item()))
+        #  print('offset: {:f}'.format(data['offset'].item()))
+
+        # construct new volume
+        self = cls()
+        self.array = converted_data['arraydata']
+        self.frameofreference = FrameOfReference(converted_data['start'],
+                                                 converted_data['spacing'],
+                                                 converted_data['size'],
+                                                 converted_data['for_uid'])
+        self.rescaleparams = RescaleParams(converted_data['scale'],
+                                           converted_data['offset'])
+        self.modality = converted_data['modality']
+        self.feature_label = converted_data['feature_label']
+
+        return self
+
 
     def toMatlab(self, path, compress=False):
         """store critical data to .mat file compatible with matlab loading
@@ -650,6 +701,11 @@ class BaseVolume:
         """
         xstr = misc.xstr  # shorter call-name for use in function
         # first represent as dictionary for savemat()
+        if (not self.rescaleparams):
+            rescaleparams = RescaleParams(1, 0)
+        else:
+            rescaleparams = self.rescaleparams
+
         data = {'arraydata':     self.array,
                 'size':          self.frameofreference.size[::-1],
                 'start':         self.frameofreference.start[::-1],
@@ -657,8 +713,8 @@ class BaseVolume:
                 'for_uid':       xstr(self.frameofreference.UID),
                 'modality':      xstr(self.modality),
                 'feature_label': xstr(self.feature_label),
-                'scale':         self.rescaleparams.scale,
-                'offset':        self.rescaleparams.offset,
+                'scale':         rescaleparams.scale,
+                'offset':        rescaleparams.offset,
                 'order':         'ZYX'
                 }
 

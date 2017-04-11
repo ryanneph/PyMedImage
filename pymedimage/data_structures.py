@@ -63,7 +63,7 @@ class WritableFeatureDefinition:
     def __init__(self, label, ext='.pickle', recalculate=False):
         self.label = label
         self.args = OrderedDict()
-        self.ext = '.{!s}'.format(str(ext).lstrip('.'))
+        self.ext = '{!s}'.format(str(ext).lstrip('.'))
         self.recalculate = recalculate
 
 
@@ -75,7 +75,7 @@ class WritableFeatureDefinition:
         return 'feature={label!s}_args=({args!s}).{ext!s}'.format(
                 label=self.label,
                 args=self.getArgsString(ignore_list),
-                ext=self.ext
+                ext=self.ext.lstrip('.')
             )
 
     def generateFeatureLabel(self, ignore_list=['glcm_stat_function']):

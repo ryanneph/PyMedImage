@@ -14,6 +14,13 @@ def xstr(s):
     """replace None with '' (empty string)"""
     return '' if s is None else str(s)
 
+def numpy_safe_string_from_array(array):
+    if array.ndim < 1 or array.shape[0] == 0:
+        return None
+    else:
+        return xstr(array.item())
+
+
 from itertools import zip_longest
 def grouper(n, iterable, fillvalue=None):
     """Unpacks iterables using groupings of n elements
