@@ -29,16 +29,15 @@ def loadPrecalculated(doi, local_feature_def):
         if matches and len(matches)>0:
             # print(', '.join(matches))
             # return None ##QUICKFIX - corrupt pickle file errors on nextline with HYPOFRAC dataset
-            return MaskableVolume().fromPickle(matches[0])
+            return doi.loadFeatureVolume(matches[0])
     return None
 
-def pickleFeature(doi, local_feature_def, result_array):
+def saveFeature(doi, local_feature_def, result_array):
     p_doi_features = doi.getFeaturesPath()
-    p_feat_pickle = os.path.join(p_doi_features, local_feature_def.generateFilename())
+    p_feat_file = os.path.join(p_doi_features, local_feature_def.generateFilename())
     os.makedirs(p_doi_features, exist_ok=True)
-    result_array.toPickle(p_feat_pickle)
-    logger.debug('Feature: "{:s}" was stored to: {!s}'.format(local_feature_def.label, p_feat_pickle))
-
+    doi.saveFeatureVolume(result_array, p_feat_file)
+    logger.debug('Feature: "{:s}" was stored to: {!s}'.format(local_feature_def.label, p_feat_file))
 
 def calculateFeature(doi, local_feature_def, loadprecalculated=False):
     """single doi, single feature calculation sub-unit that can be multithreaded and called by a pool
@@ -90,7 +89,7 @@ def calculateFeature(doi, local_feature_def, loadprecalculated=False):
     else:
         return (0, feature_vol)
 
-def calculateCompositeFeature(doi, composite_feature_def, pickleintermediate=False, loadprecalculated=False):
+def calculateCompositeFeature(doi, composite_feature_def, saveintermediate=False, loadprecalculated=False):
     # try to load image volume
     vol = doi.getImageVolume()
     if vol is None:
@@ -117,7 +116,7 @@ def calculateCompositeFeature(doi, composite_feature_def, pickleintermediate=Fal
             return 2, None
         if feature_vol:
             vol_list.append(feature_vol)
-            if pickleintermediate: pickleFeature(doi, lfeatdef, feature_vol)
+            if saveintermediate: saveFeature(doi, lfeatdef, feature_vol)
 
     if len(vol_list) <= 0:
         return 3, None
@@ -139,11 +138,11 @@ def worker_calculateFeature(args_tuple):
         if ('LocalFeatureDefinition' in cls):
             result_code, feature_vol = calculateFeature(doi, local_feature_def)
             if feature_vol:
-                pickleFeature(doi, local_feature_def, feature_vol)
+                saveFeature(doi, local_feature_def, feature_vol)
         elif ('LocalFeatureCompositionDefinition' in cls):
-            result_code, composite_result = calculateCompositeFeature(doi, local_feature_def, pickleintermediate=False)
+            result_code, composite_result = calculateCompositeFeature(doi, local_feature_def, saveintermediate=False)
             if composite_result:
-                pickleFeature(doi, local_feature_def, composite_result)
+                saveFeature(doi, local_feature_def, composite_result)
 
         if (result_code == 0):
             result_string = 'success'

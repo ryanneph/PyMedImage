@@ -12,7 +12,9 @@ from abc import ABCMeta, abstractmethod
 logger = logging.getLogger(__name__)
 
 class DOIBase:
-    """Defines a digital object identifier that supplies the paths and filenames for various feature/cluster algorithms"""
+    """Defines a digital object identifier that supplies the paths and filenames for various feature/cluster algorithms
+    Most methods can be considered as hooks that the multiprocessManager calls at particular points during processing
+    """
     __metaclass__ = ABCMeta
     def __repr__(self):
         return str(self.doi)
@@ -29,6 +31,14 @@ class DOIBase:
         pass
 
     @abstractmethod
+    def saveFeatureVolume(self, vol, path):
+        pass
+
+    @abstractmethod
+    def loadFeatureVolume(self, path):
+        pass
+
+    @abstractmethod
     def getROI(self):
         pass
 
@@ -37,18 +47,23 @@ class DOIBase:
         pass
 
     @abstractmethod
-    def getClusterL1PicklePath(self):
+    def getImageFilePath(self):
         pass
 
-    @abstractmethod
-    def getClusterL2PicklePath(self):
-        pass
+    #  @abstractmethod
+    #  def getClusterL1PicklePath(self):
+    #      pass
+
+    #  @abstractmethod
+    #  def getClusterL2PicklePath(self):
+    #      pass
 
 
 class WritableFeatureDefinition:
-    def __init__(self, label, recalculate=False):
+    def __init__(self, label, ext='.pickle', recalculate=False):
         self.label = label
         self.args = OrderedDict()
+        self.ext = '.{!s}'.format(str(ext).lstrip('.'))
         self.recalculate = recalculate
 
 
@@ -57,9 +72,10 @@ class WritableFeatureDefinition:
         self.args[key] = value
 
     def generateFilename(self, ignore_list=['glcm_stat_function']):
-        return 'feature={label!s}_args=({args!s}).pickle'.format(
+        return 'feature={label!s}_args=({args!s}).{ext!s}'.format(
                 label=self.label,
-                args=self.getArgsString(ignore_list)
+                args=self.getArgsString(ignore_list),
+                ext=self.ext
             )
 
     def generateFeatureLabel(self, ignore_list=['glcm_stat_function']):
@@ -111,7 +127,7 @@ class WritableFeatureDefinition:
                 args_string_list.append('{!s}={!s}'.format(k, v))
         return ','.join(args_string_list)
 
-    def findFiles(self, root, ext='.pickle', casesensitive=False, recursive=False):
+    def findFiles(self, root, casesensitive=False, recursive=False):
         """returns a list of full file paths beneath root if each path contains all of the strings in keywordlist
         and is of the type (ext) specified
 
@@ -123,6 +139,9 @@ class WritableFeatureDefinition:
             casesensitive -- check character case?
             recursive     -- walk into subdirectories
         """
+        # converted to constructor specified extension
+        ext = self.ext
+
         # get list of files in root (match extension if specified) ##UPDATE FOR RECURSIVITY
         files_list = []
         for head, dirs, files in os.walk(root, topdown=True):
@@ -167,7 +186,7 @@ class WritableFeatureDefinition:
 
 class LocalFeatureDefinition(WritableFeatureDefinition):
     """Standard feature definition for use in scripts. provides plug-in ensuring consistent definition"""
-    def __init__(self, label, calculation_function, recalculate=False):
+    def __init__(self, label, calculation_function, ext='.pickle', recalculate=False):
         """
         Args:
             label -- string
@@ -177,18 +196,18 @@ class LocalFeatureDefinition(WritableFeatureDefinition):
             recalculate -- parsed arg or bool literal indicating if feature should be recalculated and pickled
             args -- dict of arg key:value pairs where key exactly matches the kwarg key for calculation_function
         """
-        super().__init__(label, recalculate)
+        super().__init__(label, ext, recalculate)
         self.calculation_function = calculation_function
 
     def copy(self):
-        new = LocalFeatureDefinition(self.label, self.calculation_function, self.recalculate)
+        new = LocalFeatureDefinition(self.label, self.calculation_function, self.ext, self.recalculate)
         new.args = self.args.copy()
         return new
 
 
 class LocalFeatureCompositionDefinition(WritableFeatureDefinition):
     """Used to define a composite of a list of functions to be applied at each patch location within a full image iterator"""
-    def __init__(self, collection_label, composition_function, recalculate=False):
+    def __init__(self, collection_label, composition_function, ext='.pickle', recalculate=False):
         """
         Args:
             collection_label -- string
@@ -197,7 +216,7 @@ class LocalFeatureCompositionDefinition(WritableFeatureDefinition):
         Optional Args:
             recalculate -- parsed arg or bool literal indicating if feature should be recalculated and pickled
         """
-        super().__init__(collection_label, recalculate)
+        super().__init__(collection_label, ext, recalculate)
         self.composition_function = composition_function
         self.featdefs = []
 
@@ -206,7 +225,7 @@ class LocalFeatureCompositionDefinition(WritableFeatureDefinition):
         self.featdefs.append(featdef)
 
     def copy(self):
-        new = LocalFeatureCompositionDefinition(self.label, self.composition_function, self.recalculate)
+        new = LocalFeatureCompositionDefinition(self.label, self.composition_function, self.ext, self.recalculate)
         new.args = self.args.copy()
         new.featdefs = []
         for f in self.featdefs:
