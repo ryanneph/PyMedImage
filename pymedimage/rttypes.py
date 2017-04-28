@@ -533,8 +533,8 @@ class BaseVolume:
             ))
         s = struct.unpack('f'*_n, flat)
         vol = np.array(s).reshape(_shape)
-        vol[vol>1e10] = 0
-        vol[vol<-1e10] = 0
+        #  vol[vol>1e10] = 0
+        #  vol[vol<-1e10] = 0
         return cls.fromArray(vol, frameofreference)
 
 
@@ -594,7 +594,7 @@ class BaseVolume:
         array_list = []
         for dataset in dataset_list:
             array = dataset.pixel_array
-            array = array.reshape((1, array.shape[1], array.shape[0]))
+            array = array.reshape((1, array.shape[0], array.shape[1]))
             array_list.append(array)
 
         # stack arrays and perform scaling/offset
