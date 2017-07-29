@@ -4,11 +4,11 @@ import os
 import time
 import logging
 from multiprocessing import Pool
-from .rttypes import MaskableVolume
-from .notifications import pushNotification
-from .multiprocess_manager import MultiprocessManager
-from . import quantization
-from .quantization import QMODE_STAT, QMODE_FIXEDHU
+from pymedimage.rttypes import MaskableVolume
+from pymedimage.notifications import pushNotification
+from pymedimage.multiprocess_manager import MultiprocessManagerBase
+from pymedimage import quantization
+from pymedimage.quantization import QMODE_STAT, QMODE_FIXEDHU
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -130,68 +130,68 @@ def calculateCompositeFeature(doi, composite_feature_def, saveintermediate=False
     else:
         return (0, composite_vol)
 
-def worker_calculateFeature(args_tuple):
-    (doi, local_feature_def) = args_tuple
-    time_start = time.time()
-    try:
-        cls = local_feature_def.__class__.__name__
-        if ('LocalFeatureDefinition' in cls):
-            result_code, feature_vol = calculateFeature(doi, local_feature_def)
-            if feature_vol:
-                saveFeature(doi, local_feature_def, feature_vol)
-        elif ('LocalFeatureCompositionDefinition' in cls):
-            result_code, composite_result = calculateCompositeFeature(doi, local_feature_def, saveintermediate=False)
-            if composite_result:
-                saveFeature(doi, local_feature_def, composite_result)
 
-        if (result_code == 0):
-            result_string = 'success'
-        elif (result_code == 1):
-            result_string = 'missing data'
-        elif (result_code == 3):
-            result_string = 'composite error'
-        elif (result_code == 10):
-            result_string = 'skipped'
-        elif (result_code == 11):
-            result_string = 'recalc'
-        else:
-            # unknown result
-            result_code = -1
-            result_string = 'unknown'
+class MultiprocessManager_CalculateFeatures(MultiprocessManagerBase):
+    """wrap single feature map calculation into multiprocessing"""
 
-    except Exception as e:
-        print(e)
-        result_code = 2
-        result_string = 'exception'
-        logger.error('{!s}'.format(e))
-        raise
+    def WorkerFunction(self, argmap):
+        (doi, local_feature_def) = argmap
+        time_start = time.time()
+        try:
+            cls = local_feature_def.__class__.__name__
+            if ('LocalFeatureDefinition' in cls):
+                result_code, feature_vol = calculateFeature(doi, local_feature_def)
+                if feature_vol:
+                    saveFeature(doi, local_feature_def, feature_vol)
+            elif ('LocalFeatureCompositionDefinition' in cls):
+                result_code, composite_result = calculateCompositeFeature(doi, local_feature_def, saveintermediate=False)
+                if composite_result:
+                    saveFeature(doi, local_feature_def, composite_result)
 
-    time_end = time.time()
-    job_time_string = time.strftime('%H:%M:%S', time.gmtime(time_end-time_start))
+            if (result_code == 0):
+                result_string = 'success'
+            elif (result_code == 1):
+                result_string = 'missing data'
+            elif (result_code == 3):
+                result_string = 'composite error'
+            elif (result_code == 10):
+                result_string = 'skipped'
+            elif (result_code == 11):
+                result_string = 'recalc'
+            else:
+                # unknown result
+                result_code = -1
+                result_string = 'unknown'
 
-    return (result_code, result_string, job_time_string, doi, local_feature_def)
+        except Exception as e:
+            print(e)
+            result_code = 2
+            result_string = 'exception'
+            logger.error('{!s}'.format(e))
+            if not self.skip_exceptions:
+                raise
 
-def logstringgenerator_calculateFeature(worker_results):
-    (result_code, result_string, job_time_string, doi, local_feature_def) = worker_results
-    log_string = '[{string:12s}:{code:2d}]: {doi!s:9s}  {label!s:30s}  {args!s:45s}  {time!s}'.format(
-        string  = result_string,
-        code    = result_code,
-        doi     = doi,
-        label   = local_feature_def.label,
-        args    = local_feature_def.getArgsString(),
-        time    = job_time_string
-    )
-    return log_string
+        time_end = time.time()
+        job_time_string = time.strftime('%H:%M:%S', time.gmtime(time_end-time_start))
 
-def multiprocessCalculateFeatures(doi_list, feature_def_list, processes=16, notify=True):
-    """multithreaded manager for calculating local image features for a large number of dois"""
-    # build argmap for worker pool
-    argmap = []
-    for doi in doi_list:
-        for local_feature_def in feature_def_list:
-            argmap.append((doi, local_feature_def))
+        return (result_code, result_string, job_time_string, doi, local_feature_def)
 
-    manager = MultiprocessManager('Feature Calculation')
-    manager.registerWorkerFunction(worker_calculateFeature)
-    manager.registerLogStringGenerator(logstringgenerator_calculateFeature)
-    manager.execute(argmap, processes=processes, notify=notify)
+    def LogStringGenerator(self, worker_results):
+        (result_code, result_string, job_time_string, doi, local_feature_def) = worker_results
+        log_string = '[{string:12s}:{code:2d}]: {doi!s:9s}  {label!s:30s}  {args!s:45s}  {time!s}'.format(
+            string  = result_string,
+            code    = result_code,
+            doi     = doi,
+            label   = local_feature_def.label,
+            args    = local_feature_def.getArgsString(),
+            time    = job_time_string
+        )
+        return log_string
+
+    def execute(self, doi_list, feature_def_list):
+        # build argmap for worker pool
+        argmap = []
+        for doi in doi_list:
+            for local_feature_def in feature_def_list:
+                argmap.append((doi, local_feature_def))
+        MultiprocessManagerBase.execute(self, argmap)

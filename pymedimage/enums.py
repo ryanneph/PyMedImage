@@ -1,4 +1,4 @@
-"""constants.py
+"""enums.py
 
 constants for patient axis specifications
     Uses depth-row major ordering:

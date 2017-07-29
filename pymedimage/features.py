@@ -10,8 +10,8 @@ import numpy as np
 import scipy.ndimage
 import scipy.stats
 import pywt
-from .rttypes import MaskableVolume, FrameOfReference
-from .misc import g_indents, indent, timer
+from pymedimage.rttypes import MaskableVolume, FrameOfReference
+from pymedimage.misc import g_indents, indent, timer
 
 # initialize module logger
 logger = logging.getLogger(__name__)

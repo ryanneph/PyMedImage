@@ -2,8 +2,8 @@ import os
 import logging
 from sklearn.decomposition import PCA as sklearnPCA
 import numpy as np
-from .misc import indent, g_indents, generate_heatmap_label
-from .rttypes import MaskableVolume
+from pymedimage.misc import indent, g_indents, generate_heatmap_label
+from pymedimage.rttypes import MaskableVolume
 
 # initialize module logger
 logger = logging.getLogger(__name__)

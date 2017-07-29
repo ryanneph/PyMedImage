@@ -3,8 +3,9 @@ from string import Template
 import logging
 import math
 import numpy as np
-from .rttypes import MaskableVolume
-from .quantization import QMODE_STAT, QMODE_FIXEDHU
+from pymedimage.rttypes import MaskableVolume
+from pymedimage.quantization import QMODE_STAT, QMODE_FIXEDHU
+
 import gc
 import pycuda
 import pycuda.tools
@@ -134,7 +135,7 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwi
 
     # enforce quantization mode selection
     # fixed_start, fixed_end = -150, 350
-    fixed_start, fixed_end = -175, 75
+    fixed_start, fixed_end = -250,350
     if gray_levels and binwidth:
         logger.exception('must exclusively specify "binwidth" or "gray_levels" to select glcm quantization mode')
     elif binwidth:
@@ -181,7 +182,7 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwi
                                             'STAT': stat_name})
     mod2 = SourceModule(cuda_source,
                         options=['-I {!s}'.format(parent_dir),
-                                '-g', '-G', '-lineinfo'
+                                #  '-g', '-G', '-lineinfo'
                                 ])
     func = mod2.get_function('image_iterator_gpu')
 

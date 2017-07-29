@@ -17,10 +17,10 @@ try:
 
     # pushbullet config
     __pb__ = Pushbullet(_PB_API_KEY_)
-    __pb_channel_research__ = __pb__.channels[0]
+    __pb_channel__ = __pb__.channels[0]
 
     def pushNotification(title, body):
-        __pb_channel_research__.push_note(title, body)
+        __pb_channel__.push_note(title, body)
 except:
     logger.debug('Notifications have been disabled because no valid pushbullet api key was defined in config.py')
     def pushNotification(title, body):

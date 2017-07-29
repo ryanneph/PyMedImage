@@ -9,11 +9,11 @@ from sklearn.cluster import KMeans, AgglomerativeClustering
 from sklearn.preprocessing import StandardScaler
 import scipy.cluster.hierarchy as sch
 import numpy as np
-from .data_handling import create_pruned_vector, expand_pruned_vector, create_feature_matrix
-from .misc import indent, g_indents
-from .rttypes import MaskableVolume
-from .multiprocess_manager import MultiprocessManager
-from . import quantization
+from pymedimage.data_handling import create_pruned_vector, expand_pruned_vector, create_feature_matrix
+from pymedimage.misc import indent, g_indents
+from pymedimage.rttypes import MaskableVolume
+from pymedimage.multiprocess_manager import MultiprocessManagerBase
+from pymedimage import quantization
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -260,54 +260,56 @@ def DOICluster(doi_list, local_feature_defs, nclusters=20, recluster=False):
     else:
         return 0
 
-def worker_DOICluster(args_tuple):
-    """handles worker pool logging and argument unpacking"""
-    time_start = time.time()
-    try:
-        (doi, local_feature_def, nclusters) = args_tuple[:3]
-        result_code = DOICluster(*args_tuple, recluster=True)
 
-        if (result_code == 0):
-            result_string = 'success'
-        elif (result_code == 1):
-            result_string = 'missing data'
-        elif (result_code == 10):
-            result_string = 'skipped'
-        elif (result_code == 11):
-            result_string = 'recalc'
-        else:
-            # unknown result
-            result_code = -1
-            result_string = 'unknown'
+class MultiprocessManager_Cluster(MultiprocessManagerBase):
+    """wrap single L1 clustering operation into multiprocessing"""
 
-    except Exception as e:
-        result_code = 2
-        result_string = 'exception'
-        logger.error('{!s}'.format(e))
+    def WorkerFunction(self, argmap):
+        """handles worker pool logging and argument unpacking"""
+        time_start = time.time()
+        try:
+            (doi, local_feature_def, nclusters) = argmap[:3]
+            result_code = DOICluster(*argmap, recluster=True)
 
-    time_end = time.time()
-    job_time_string = time.strftime('%H:%M:%S', time.gmtime(time_end-time_start))
+            if (result_code == 0):
+                result_string = 'success'
+            elif (result_code == 1):
+                result_string = 'missing data'
+            elif (result_code == 10):
+                result_string = 'skipped'
+            elif (result_code == 11):
+                result_string = 'recalc'
+            else:
+                # unknown result
+                result_code = -1
+                result_string = 'unknown'
 
-    return (result_code, result_string, job_time_string, doi)
+        except Exception as e:
+            result_code = 2
+            result_string = 'exception'
+            logger.error('{!s}'.format(e))
+            if not self.skip_exceptions:
+                raise
 
-def logstringgenerator_DOICluster(worker_results):
-    (result_code, result_string, job_time_string, doi) = worker_results
-    if isinstance(doi, list): doi = doi[0]
-    log_string = '[{string:12s}:{code:2d}]: {doi!s:9s}  {time!s}'.format(
-        string  = result_string,
-        code    = result_code,
-        doi     = doi,
-        time    = job_time_string
-    )
-    return log_string
+        time_end = time.time()
+        job_time_string = time.strftime('%H:%M:%S', time.gmtime(time_end-time_start))
 
-def multiprocessDOICluster(doi_list, feature_defs, nclusters=20, processes=16, notify=True):
-    argmap = []
-    for doi in doi_list:
-        argmap.append((doi, feature_defs, nclusters))
+        return (result_code, result_string, job_time_string, doi)
 
-    manager = MultiprocessManager('Level 1 Clustering')
-    manager.registerWorkerFunction(worker_DOICluster)
-    manager.registerLogStringGenerator(logstringgenerator_DOICluster)
-    manager.execute(argmap, processes=processes, notify=notify)
+    def logstringgenerator_DOICluster(self, worker_results):
+        (result_code, result_string, job_time_string, doi) = worker_results
+        if isinstance(doi, list): doi = doi[0]
+        log_string = '[{string:12s}:{code:2d}]: {doi!s:9s}  {time!s}'.format(
+            string  = result_string,
+            code    = result_code,
+            doi     = doi,
+            time    = job_time_string
+        )
+        return log_string
 
+    def execute(self, doi_list, feature_def_list, nclusters):
+        # build argmap for worker pool
+        argmap = []
+        for doi in doi_list:
+            argmap.append((doi, feature_def_list, nclusters))
+        MultiprocessManagerBase.execute(self, argmap)

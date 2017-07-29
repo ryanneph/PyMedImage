@@ -16,7 +16,7 @@ import copy
 import warnings
 from PIL import Image, ImageDraw
 from scipy.ndimage import interpolation
-from . import dcmio, misc
+from pymedimage import dcmio, misc
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -611,9 +611,11 @@ class BaseVolume:
             logger.info('file at path: {:s} doesn\'t exists'.format(pickle_path))
         with open(pickle_path, 'rb') as p:
             # added to fix broken module refs in old pickles
+            sys.modules['utils'] = sys.modules[__name__]
             sys.modules['utils.rttypes'] = sys.modules[__name__]
             basevolumepickle = pickle.load(p)
             del sys.modules['utils.rttypes']
+            del sys.modules['utils']
 
         # import data to this object
         try:
@@ -651,8 +653,8 @@ class BaseVolume:
         """
         extract_str = misc.numpy_safe_string_from_array
         data = scipy.io.loadmat(path, appendmat=True)
-        for key, obj in data.items():
-            print('{!s}({!s}: {!s}'.format(key, type(obj), obj))
+        #  for key, obj in data.items():
+        #      print('{!s}({!s}: {!s}'.format(key, type(obj), obj))
         converted_data = {
             'arraydata': data['arraydata'],
             'size': tuple(data['size'][0,:])[::-1],

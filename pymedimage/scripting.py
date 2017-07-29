@@ -7,9 +7,9 @@ import os
 import logging
 import pickle
 from collections import OrderedDict
-from .rttypes import MaskableVolume, ROI
-from .misc import indent, g_indents, findFiles
-from . import dcmio, cluster, rttypes
+from pymedimage.rttypes import MaskableVolume, ROI
+from pymedimage.misc import indent, g_indents, findFiles
+from pymedimage import dcmio, cluster, rttypes
 
 # initialize module logger
 logger = logging.getLogger(__name__)

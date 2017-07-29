@@ -1,28 +1,42 @@
+import sys
 import os
 import time
 import logging
-from multiprocessing import Pool
-from .notifications import pushNotification
+import multiprocessing
+from pymedimage.notifications import pushNotification
+from abc import ABCMeta, abstractmethod
 
 # initialize module logger
 logger = logging.getLogger(__name__)
 
-class MultiprocessManager:
-    def __init__(self, title, workerfunction=None, logstringgenerator=None):
+class MultiprocessManagerBase:
+    """Base class for multiprocessing with standard logging function and notifications"""
+    __metaclass__ = ABCMeta
+    processes = multiprocessing.cpu_count()
+
+    def __init__(self, title="Generic Multiprocess Manager", processes=processes, notify=True, skip_exceptions=False):
         self.title = title
-        self.workerfunction = workerfunction
-        if logstringgenerator:
-            self.logstringgenerator = logstringgenerator
-        else:
-            self.logstringgenerator = logstringgenerator_generic
+        self.processes = processes
+        self.notify = notify
+        self.skip_exceptions = skip_exceptions
 
-    def registerLogStringGenerator(self, genfunction):
-        self.logstringgenerator = genfunction
+    @abstractmethod
+    def WorkerFunction(self, argmap):
+        """abstract class defining worker function"""
+        pass
 
-    def registerWorkerFunction(self, workerfunction):
-        self.workerfunction = workerfunction
+    def LogStringGenerator(self, worker_results):
+        (result_code, result_string, job_time_string, doi) = worker_results
+        if isinstance(doi, list): doi = doi[0]
+        log_string = '[{string:12s}:{code:2d}]: {doi!s:9s}  {time!s}'.format(
+            string  = result_string,
+            code    = result_code,
+            doi     = doi,
+            time    = job_time_string
+        )
+        return log_string
 
-    def execute(self, argmap, processes=32, notify=True):
+    def execute(self, argmap):
         """multithreaded manager for calculating local image features for a large number of dois"""
         try:
             # start multiprocessing and print output summary for each job
@@ -32,7 +46,7 @@ class MultiprocessManager:
             error_count = 0
             # limit number of concurrent processes as there is only so much GPU memory available at one time<Plug>(neosnippet_expand)
             # with 8 proc: max mem usage of ~4-4.5GB of 12.204GB total global mem
-            with Pool(processes=processes) as p:
+            with multiprocessing.Pool(processes=self.processes) as p:
                 logger.info(str(self.title))
                 logger.info('-----------------------------------------------------------------------------------------')
                 logger.info('BEGINNING PROCESSING (at {!s})'.format(time.strftime('%Y-%b-%d %H:%M:%S')))
@@ -40,10 +54,10 @@ class MultiprocessManager:
                 logger.info('RESULTS:  (total #jobs: {:d})'.format(total_jobs))
                 logger.info('-----------------------------------------------------------------------------------------')
 
-                for worker_results in p.imap(self.workerfunction, argmap, chunksize=1):
+                for worker_results in p.imap(self.WorkerFunction, argmap, chunksize=1):
                     jnum += 1
                     result_code = worker_results[0]
-                    log_string = self.logstringgenerator(worker_results)
+                    log_string = self.LogStringGenerator(worker_results)
                     if log_string:
                         log_string = 'job#{jnum:_>5d} '.format(jnum=jnum) + log_string
                         logger.info(log_string)
@@ -61,22 +75,8 @@ class MultiprocessManager:
             logger.info('')
 
         except Exception as e:
-            if notify: pushNotification('FAILURE - {!s}'.format(self.title), '{!s}'.format(repr(e)))
+            if self.notify: pushNotification('FAILURE - {!s}'.format(self.title), '{!s}'.format(repr(e)))
             raise e
 
-        if notify: pushNotification('SUCCESS - {!s}'.format(self.title), 'Finished processing {:d} jobs \
+        if self.notify: pushNotification('SUCCESS - {!s}'.format(self.title), 'Finished processing {:d} jobs \
                                      with {:d} errors'.format(total_jobs, error_count))
-
-####################################################################################################
-# Sample Code
-####################################################################################################
-def logstringgenerator_generic(worker_results):
-    (result_code, result_string, job_time_string, doi) = worker_results
-    if isinstance(doi, list): doi = doi[0]
-    log_string = '[{string:12s}:{code:2d}]: {doi!s:9s}  {time!s}'.format(
-        string  = result_string,
-        code    = result_code,
-        doi     = doi,
-        time    = job_time_string
-    )
-    return log_string

@@ -4,8 +4,7 @@ Contains class definitions for inheritence in dataset specific implementations
 """
 import os
 import logging
-import math
-from collections import OrderedDict
+from collections import OrderedDict, MutableSequence
 from abc import ABCMeta, abstractmethod
 
 # initialize module logger
@@ -26,10 +25,12 @@ class DOIBase:
     # def getDicomDataPath(self):
     #     pass
 
+    # Define how to load image volume from file
     @abstractmethod
     def getImageVolume(self):
         pass
 
+    # Define how to save image volume to file
     @abstractmethod
     def saveFeatureVolume(self, vol, path):
         pass
@@ -51,16 +52,22 @@ class DOIBase:
         pass
 
     #  @abstractmethod
-    #  def getClusterL1PicklePath(self):
+    #  def getClusterL1Path(self):
     #      pass
 
     #  @abstractmethod
-    #  def getClusterL2PicklePath(self):
+    #  def getClusterL2Path(self):
     #      pass
 
 
 class WritableFeatureDefinition:
-    def __init__(self, label, ext='.pickle', recalculate=False):
+    """Base class for defining how to calculate a feature, and store/retrieve from disk given label, set of arguments and method
+
+    This method standardizes how to name a feature and generate descriptive label strings
+    and provides a method for matching to any pre-written files given its spec
+    """
+
+    def __init__(self, label, ext='.mat', recalculate=False):
         self.label = label
         self.args = OrderedDict()
         self.ext = '{!s}'.format(str(ext).lstrip('.'))
@@ -85,7 +92,7 @@ class WritableFeatureDefinition:
             )
 
     def getKeywords(self):
-        """generates keywords list for finding a pickled feature file using findFiles()
+        """generates keywords list for finding a serialized feature file using findFiles()
 
         Returns:
             list of keyword strings which must be in filename for match
@@ -186,14 +193,14 @@ class WritableFeatureDefinition:
 
 class LocalFeatureDefinition(WritableFeatureDefinition):
     """Standard feature definition for use in scripts. provides plug-in ensuring consistent definition"""
-    def __init__(self, label, calculation_function, ext='.pickle', recalculate=False):
+    def __init__(self, label, calculation_function, ext='.bin', recalculate=False):
         """
         Args:
             label -- string
             calculation_function -- function pointer for patch based local feature calcuation matching
                                     signature: calculation_function(ndArray)
         Optional Args:
-            recalculate -- parsed arg or bool literal indicating if feature should be recalculated and pickled
+            recalculate -- parsed arg or bool literal indicating if feature should be recalculated and serialized
             args -- dict of arg key:value pairs where key exactly matches the kwarg key for calculation_function
         """
         super().__init__(label, ext, recalculate)
@@ -207,14 +214,14 @@ class LocalFeatureDefinition(WritableFeatureDefinition):
 
 class LocalFeatureCompositionDefinition(WritableFeatureDefinition):
     """Used to define a composite of a list of functions to be applied at each patch location within a full image iterator"""
-    def __init__(self, collection_label, composition_function, ext='.pickle', recalculate=False):
+    def __init__(self, collection_label, composition_function, ext='.bin', recalculate=False):
         """
         Args:
             collection_label -- string
             composition_function -- function pointer for composing a list of local feature calcuation results
                 as defined by the member feature_defs
         Optional Args:
-            recalculate -- parsed arg or bool literal indicating if feature should be recalculated and pickled
+            recalculate -- parsed arg or bool literal indicating if feature should be recalculated and serialized
         """
         super().__init__(collection_label, ext, recalculate)
         self.composition_function = composition_function
@@ -232,42 +239,42 @@ class LocalFeatureCompositionDefinition(WritableFeatureDefinition):
             new.featdefs.append(f.copy())
         return new
 
-class FeatureList():
+class FeatureList(MutableSequence):
+    """Defines basic functionality of a list with lookup methods for finding members by their member args"""
     def __init__(self, feature_def_list=None):
         if (feature_def_list and isinstance(feature_def_list, list)):
-            self.__storage__ = feature_def_list
+            self.__storage = feature_def_list
         else:
-            self.__storage__ = []
+            self.__storage = []
 
-    def append(self, item):
-        self.__storage__.append(item)
-
-    def __findbylabel__(self, key):
-        for item in self.__storage__:
-            label = item.label
-            if (label == key):
-                return item
+    def __findbylabel(self, key):
+        for i, item in enumerate(self.__storage):
+            if (item.label == key):
+                return i
         raise KeyError
 
-    def __getitem__(self, key):
-        nitems = len(self.__storage__)
+    def __setitem__(self, key, value):
+        # string indexing
         if (isinstance(key, str)):
-            return self.__findbylabel__(key)
+            self.__storage[self.__findbylabel(key)] = value
+        # Let list handle all other types
+        else:
+            self.__storage[key] = value
 
-        if (key >= nitems):
-            raise IndexError
-        elif (key < 0):
-            if (math.abs(key) > nitems):
-                raise IndexError
-            else:
-                key = nitems + key
-        return self.__storage__.__getitem__(key)
+    def __getitem__(self, key):
+        # string indexing
+        if (isinstance(key, str)):
+            return self.__storage[self.__findbylabel(key)]
+        # Let list handle all other types
+        else:
+            return self.__storage[key]
 
     def __len__(self):
-        return len(self.__storage__)
+        return len(self.__storage)
 
     def __iter__(self):
-        for element in self.__storage__:
+        for element in self.__storage:
             yield element
 
-
+    def insert(self, i, v):
+        self.__storage.insert(i, v)

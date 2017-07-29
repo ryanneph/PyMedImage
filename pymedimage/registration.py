@@ -3,7 +3,7 @@
 functions and classes for working with image registation
 """
 import logging
-from .rttypes import MaskableVolume
+from pymedimage.rttypes import MaskableVolume
 import SimpleITK as sitk
 
 # initialize module logger
