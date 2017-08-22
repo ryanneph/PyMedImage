@@ -269,6 +269,14 @@ class FeatureList(MutableSequence):
         else:
             return self.__storage[key]
 
+    def __delitem__(self, key):
+        # string indexing
+        if (isinstance(key, str)):
+            del self.__storage[self.__findbylabel(key)]
+        # Let list handle all other types
+        else:
+            del self.__storage[key]
+
     def __len__(self):
         return len(self.__storage)
 

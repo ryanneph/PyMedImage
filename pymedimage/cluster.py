@@ -201,11 +201,11 @@ def DOICluster(doi_list, local_feature_defs, nclusters=20, recluster=False):
         # generate doi specific paths
         p_doi_features = doi.getFeaturesPath()
         p_doi_clusters = os.path.join(doi.p_CLUSTERS, doi.doi)
-        p_clusters_l1_pickle = doi.getClusterL1PicklePath()
+        p_clusters_l1 = doi.getClusterL1Path()
 
         # check for existing cluster
         reclustered = False
-        if (os.path.exists(p_clusters_l1_pickle)):
+        if (os.path.exists(p_clusters_l1)):
             if not recluster:
                 return 10
             else:
@@ -233,7 +233,7 @@ def DOICluster(doi_list, local_feature_defs, nclusters=20, recluster=False):
                 logger.error(message)
                 return 1
 
-            feature_volume_list.append(MaskableVolume().fromPickle(matches[0]).resample((1,1,1)))
+            feature_volume_list.append(doi.loadFeatureVolume(matches[0]).resample((1,1,1)))
 
     # create feature matrix for clustering from feature volume list (pruning is handled automatically)
     #### HACK TO ENSURE FEATURE MATRIX CONFORMS TO IMAGE RESOLUTION
@@ -241,19 +241,19 @@ def DOICluster(doi_list, local_feature_defs, nclusters=20, recluster=False):
     (pruned_feature_array, frameofreference, \
         full_feature_array, feat_column_labels) = create_feature_matrix(feature_volume_list, roi, PCA=False, PCA_components=12)
 
-    # Cluster and create cluster volume then pickle it
+    # Cluster and create cluster volume then store it
     pruned_cluster_vector = cluster_kmeans(pruned_feature_array, nclusters, njobs=1)
     dense_cluster_volume = expand_pruned_vector(pruned_cluster_vector, roi, frameofreference)
     os.makedirs(p_doi_clusters, exist_ok=True)
-    dense_cluster_volume.toPickle(p_clusters_l1_pickle)
+    doi.saveFeatureVolume(dense_cluster_volume, p_clusters_l1)
 
-    # store feature matrix in pickle as numpy ndarray
+    # store feature matrix in binary as numpy ndarray
     # package full_feature_array into dict with labeling of the featues associated with each column
     # and each row corresponding to each row of the dense_cluster_volume in flattened form
-    featpickle_dict = {'feature_matrix': full_feature_array,
+    feat_dict = {'feature_matrix': full_feature_array,
                        'labels':         feat_column_labels}
-    with open(doi.getClusterL1FeaturesPicklePath(), mode='wb') as f:
-        pickle.dump(featpickle_dict, f)  # dense form
+    with open(doi.getClusterL1FeaturesPath(), mode='wb') as f:
+        pickle.dump(feat_dict, f)  # dense form
 
     if reclustered:
         return 11

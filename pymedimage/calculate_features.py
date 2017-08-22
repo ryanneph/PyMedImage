@@ -47,7 +47,6 @@ def calculateFeature(doi, local_feature_def, loadprecalculated=False):
         doi (str): string identifier unique to each patient/doi
         local_feature_def (LocalFeatureDefinition): information for feature calculation
 
-        pickle (bool): if true, store result to pickle file, if false simply return 2-tuple of (result_code, result_array)
     Returns:
         int: status code
     """

@@ -439,18 +439,18 @@ class ROI:
         frameofreference = FrameOfReference(start, spacing, size, UID=None)
         return frameofreference
 
-    def toPickle(self, pickle_path):
+    def toPickle(self, path):
         """convenience function for storing ROI to pickle file"""
-        _dirname = os.path.dirname(pickle_path)
+        _dirname = os.path.dirname(path)
         if (_dirname and _dirname is not ''):
             os.makedirs(_dirname, exist_ok=True)
-        with open(pickle_path, 'wb') as p:
+        with open(path, 'wb') as p:
             pickle.dump(self, p)
 
     @staticmethod
-    def fromPickle(pickle_path):
+    def fromPickle(path):
         """convenience function for restoring ROI from pickle file"""
-        with open(pickle_path, 'rb') as p:
+        with open(path, 'rb') as p:
             return pickle.load(p)
 
 class BaseVolume:
@@ -604,48 +604,48 @@ class BaseVolume:
         return self
 
     @classmethod
-    def fromPickle(cls, pickle_path):
+    def fromPickle(cls, path):
         """initialize BaseVolume from unchanging format so features can be stored and recalled long term
         """
-        if (not os.path.exists(pickle_path)):
-            logger.info('file at path: {:s} doesn\'t exists'.format(pickle_path))
-        with open(pickle_path, 'rb') as p:
+        if (not os.path.exists(path)):
+            logger.info('file at path: {:s} doesn\'t exists'.format(path))
+        with open(path, 'rb') as p:
             # added to fix broken module refs in old pickles
             sys.modules['utils'] = sys.modules[__name__]
             sys.modules['utils.rttypes'] = sys.modules[__name__]
-            basevolumepickle = pickle.load(p)
+            basevolumeserial = pickle.load(p)
             del sys.modules['utils.rttypes']
             del sys.modules['utils']
 
         # import data to this object
         try:
             self = cls()
-            self.array = basevolumepickle.dataarray
-            self.frameofreference = FrameOfReference(basevolumepickle.startposition,
-                                                     basevolumepickle.spacing,
-                                                     basevolumepickle.size)
-            self.modality = basevolumepickle.modality
-            self.feature_label = basevolumepickle.feature_label
+            self.array = basevolumeserial.dataarray
+            self.frameofreference = FrameOfReference(basevolumeserial.startposition,
+                                                     basevolumeserial.spacing,
+                                                     basevolumeserial.size)
+            self.modality = basevolumeserial.modality
+            self.feature_label = basevolumeserial.feature_label
         except:
-            raise PickleOutdatedError()
+            raise SerialOutdatedError()
         return self
 
-    def toPickle(self, pickle_path):
+    def toPickle(self, path):
         """store critical data to unchanging format that can be pickled long term
         """
-        basevolumepickle = BaseVolumePickle()
-        basevolumepickle.startposition = self.frameofreference.start
-        basevolumepickle.spacing = self.frameofreference.spacing
-        basevolumepickle.size = self.frameofreference.size
-        basevolumepickle.dataarray = self.array
-        basevolumepickle.modality = self.modality
-        basevolumepickle.feature_label = self.feature_label
+        basevolumeserial = BaseVolumeSerial()
+        basevolumeserial.startposition = self.frameofreference.start
+        basevolumeserial.spacing = self.frameofreference.spacing
+        basevolumeserial.size = self.frameofreference.size
+        basevolumeserial.dataarray = self.array
+        basevolumeserial.modality = self.modality
+        basevolumeserial.feature_label = self.feature_label
 
-        _dirname = os.path.dirname(pickle_path)
+        _dirname = os.path.dirname(path)
         if (_dirname and _dirname is not ''):
             os.makedirs(_dirname, exist_ok=True)
-        with open(pickle_path, 'wb') as p:
-            pickle.dump(basevolumepickle, p)
+        with open(path, 'wb') as p:
+            pickle.dump(basevolumeserial, p)
 
     @classmethod
     def fromMatlab(cls, path):
@@ -1011,12 +1011,12 @@ class MaskableVolume(BaseVolume):
         return volume_copy
 
 
-class PickleOutdatedError(Exception):
+class SerialOutdatedError(Exception):
     def __init__(self):
-        super().__init__('a missing value was requested from a BaseVolumePickle object')
+        super().__init__('a missing value was requested from a BaseVolumeSerial object')
 
 
-class BaseVolumePickle:
+class BaseVolumeSerial:
     """Defines common object that can store feature data for long term I/O
     """
     def __init__(self):

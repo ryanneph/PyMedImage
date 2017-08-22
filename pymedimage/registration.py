@@ -1,4 +1,5 @@
 """registration.py
+!!! WORK IN PROGRESS !!!
 
 functions and classes for working with image registation
 """
