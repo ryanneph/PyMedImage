@@ -6,6 +6,9 @@ import os
 import logging
 import logging.handlers
 
+# capture warnings and emit logging.warning() message
+logging.captureWarnings(True)
+
 def RotatingFile(logpath, logname, errorlogname=None):
     """initialize and return standard logger and error logger objects
 

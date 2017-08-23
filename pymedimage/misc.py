@@ -10,15 +10,24 @@ import logging
 # initialize module logger
 logger = logging.getLogger(__name__)
 
+def ensure_extension(fname, ext):
+    '''guarantee only one instance of extension appears in fname'''
+    # prepare extension with leading dot
+    ext = '.' + ext.lstrip('.')
+    # guarantee only one instance of extension
+    return fname.rstrip(ext) + ext
+
 def xstr(s):
     """replace None with '' (empty string)"""
     return '' if s is None else str(s)
 
 def numpy_safe_string_from_array(array):
-    if array.ndim < 1 or array.shape[0] == 0:
-        return None
-    else:
-        return xstr(array.item())
+    try:
+        if array.ndim < 1 or array.shape[0] == 0:
+            return None
+        else:
+            return xstr(array.item())
+    except: return None
 
 
 from itertools import zip_longest

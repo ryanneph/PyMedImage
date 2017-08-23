@@ -6,6 +6,7 @@ A collection of functions/methods that carry us from one step to another in the 
 import os
 import logging
 import pickle
+import warnings
 from collections import OrderedDict
 from pymedimage.rttypes import MaskableVolume, ROI
 from pymedimage.misc import indent, g_indents, findFiles
@@ -75,7 +76,7 @@ def loadROIs(rtstruct_path):
     Returns:
         dict<key='contour name', val=ROI>
     """
-    logger.warning('scripting.loadROIs() DEPRECATED IN FAVOR OF rttypes.ROI classmethod collectionFromFile(rtstruct_path)')
+    warnings.warn('scripting.loadROIs() DEPRECATED IN FAVOR OF rttypes.ROI classmethod collectionFromFile(rtstruct_path)', DeprecationWarning)
     if (not os.path.exists(rtstruct_path)):
         logger.info(indent('invalid path provided: "{:s}"'.format(rtstruct_path), l2_indent))
         raise ValueError
@@ -142,7 +143,7 @@ def getFeatureKeywords(feature_name, args):
     Returns:
         list of keyword strings which must be in filename for match
     """
-    logger.warning('DEPRECATED IN FAVOR OF CLASS METHOD: WritableFeatureDefinition.getKeywords()')
+    warnings.warn('DEPRECATED IN FAVOR OF CLASS METHOD: WritableFeatureDefinition.getKeywords()', DeprecationWarning)
     keywords = ['feature={!s}'.format(feature_name)] + \
                ['{argname!s}={argval!s}'.format(argname=n, argval=v)
                 for (n, v) in args.items()]
@@ -160,7 +161,7 @@ def getArgsString(args, ignore_list=[]):
     Returns:
         string
     """
-    logger.warning('DEPRECATED IN FAVOR OF CLASS METHOD: WritableFeatureDefinition.getArgsString()')
+    warnings.warn('DEPRECATED IN FAVOR OF CLASS METHOD: WritableFeatureDefinition.getArgsString()', DeprecationWarning)
     args_string_list = []
     for k, v in args.items():
         ignore = False
@@ -198,7 +199,7 @@ def checkPickle(root, label, args, mod=None, roi=None, all=False):
         return None
 
 def loadPickle(path, mod=None, feature_label=None, nindent=l2_indent):
-    logger.warning('DEPRECATED IN FAVOR OF: calculate_features.loadPrecalculated()')
+    warnings.warn('DEPRECATED IN FAVOR OF: calculate_features.loadPrecalculated()', DeprecationWarning)
     logger.info(indent('Pickled feature vector found ({!s}). Loading.'.format(mod), nindent))
     try:
         vol = MaskableVolume().fromPickle(path)
@@ -221,7 +222,7 @@ def loadPickle(path, mod=None, feature_label=None, nindent=l2_indent):
             return None
 
 def savePickle(path, vol, mod, label, args, roi=None, nindent=l2_indent):
-    logger.warning('savePickle DEPRECATED IN FAVOR OF: calculate_features.pickleFeature()')
+    warnings.warn('savePickle DEPRECATED IN FAVOR OF: calculate_features.pickleFeature()', DeprecationWarning)
     args_string = getArgsString(args, ignore_list=['glcm_stat_function'])
     if (roi is not None):
         roi_string = 'roi={!s}_'.format(roi.roiname)

@@ -1,5 +1,6 @@
 import os
 import sys
+import warnings
 # add root to PATH
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
@@ -14,3 +15,7 @@ except ImportError:
             pass
 
 logging.getLogger(__name__).addHandler(NullHandler())
+
+# enable all warnings within the lib
+warnings.filterwarnings('default', module='pymedimage.*', category=DeprecationWarning)
+warnings.filterwarnings('default', module='pymedimage.*', category=PendingDeprecationWarning)

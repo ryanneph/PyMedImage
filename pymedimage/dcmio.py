@@ -8,6 +8,7 @@ workable datasets for later use in projects
 import os
 import sys
 import logging
+import warnings
 import dicom
 from string import Template
 from pymedimage.misc import indent, g_indents
@@ -25,7 +26,11 @@ def read_dicom(path):
     """read a dicom slice using pydicom and return the dataset object"""
     if (not os.path.exists(path)):
         raise FileNotFoundError('file at {!s} does not exist'.format(path))
-    ds = dicom.read_file(path)
+    try:
+        ds = dicom.read_file(path)
+    except dicom.errors.InvalidDicomError as e:
+        warnings.warn('dicom.read_dicom() failed with error: "{!s}". Trying again with force=True'.format(e))
+        ds = dicom.read_file(path, force=True)
     return ds
 
 def read_dicom_dir(path, recursive=False, verbosity=0):

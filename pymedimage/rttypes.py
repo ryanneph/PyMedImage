@@ -6,17 +6,20 @@ Datatypes for general dicom processing including masking, rescaling, and fusion
 import sys
 import os
 import logging
+import warnings
 import math
 import numpy as np
 import dicom  # pydicom
 import pickle
 import scipy.io  # savemat -> save to .mat
+import h5py
 import struct
 import copy
 import warnings
 from PIL import Image, ImageDraw
 from scipy.ndimage import interpolation
 from pymedimage import dcmio, misc
+from pymedimage.misc import ensure_extension
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -30,8 +33,9 @@ class RescaleParams:
         self.offset = offset
 
     def __repr__(self):
-        return 'scale:  {:g}\n'.format(self.scale) + \
-               'offset: {:g}'.format(self.offset)
+        return '{!s}:\n'.format(self.__class__) + \
+               '  scale:  {:g}\n'.format(self.scale) + \
+               '  offset: {:g}\n'.format(self.offset)
 
 
 class FrameOfReference:
@@ -58,10 +62,10 @@ class FrameOfReference:
         self.UID = UID
 
     def __repr__(self):
-        return 'FrameOfReference:\n' + \
-               'start   <mm> (x,y,z): ({:0.3f}, {:0.3f}, {:0.3f})\n'.format(*self.start) + \
-               'spacing <mm> (x,y,z): ({:0.3f}, {:0.3f}, {:0.3f})\n'.format(*self.spacing) + \
-               'size    <mm> (x,y,z): ({:d}, {:d}, {:d})'.format(*self.size)
+        return '{!s}:\n'.format(self.__class__) + \
+               '  start   <mm> (x,y,z): ({:0.3f}, {:0.3f}, {:0.3f})\n'.format(*self.start) + \
+               '  spacing <mm> (x,y,z): ({:0.3f}, {:0.3f}, {:0.3f})\n'.format(*self.spacing) + \
+               '  size    <mm> (x,y,z): ({:d}, {:d}, {:d})\n'.format(*self.size)
 
     def __eq__(self, compare):
         if (self.start   == compare.start and
@@ -120,49 +124,24 @@ class FrameOfReference:
 class ROI:
     """Defines a labeled RTStruct ROI for use in masking and visualization of Radiotherapy contours
     """
-    def __init__(self, roicontour, structuresetroi):
-        """takes FrameOfReference object and roicontour/structuresetroi dicom dataset objects and stores
-        sorted contour data
-
-        Args:
-            frameofreference   -- FrameOfReference object providing details necessary for dense mask creation
-            roicontour         -- dicom dataset containing contour point coords for all slices
-            structuresetroi    -- dicom dataset containing additional information about contour
-        """
-        self.roinumber = structuresetroi.ROINumber
-        self.refforuid = structuresetroi.ReferencedFrameOfReferenceUID
+    def __init__(self, roicontour=None, structuresetroi=None):
+        self.roinumber = None
+        self.refforuid = None
         self.frameofreference = None
-        self.roiname = structuresetroi.ROIName
-        self.coordslices = None
+        self.roiname = None
+        self.coordslices = []
         # Cached variables
         self.__cache_densemask = None   # storage for BaseVolume when consecutive calls to
                                         # makeDenseMask are made
                                         # with the same frameofreference object
 
-        # Populate list of coordslices, each containing a list of ordered coordinate points
-        contoursequence = roicontour.ContourSequence
-        if (len(contoursequence) <= 0):
-            logger.debug('no coordinates found in roi: {:s}'.format(self.roiname))
-            self.coordslices = None
-        else:
-            self.coordslices = []
-            logger.debug('loading roi: {:s} with {:d} slices'.format(self.roiname, len(roicontour.ContourSequence)))
-            for coordslice in roicontour.ContourSequence:
-                points_list = []
-                for x, y, z in misc.grouper(3, coordslice.ContourData):
-                    points_list.append( (x, y, z) )
-                self.coordslices.append(points_list)
-
-            # sort by slice position in ascending order (inferior -> superior)
-            self.coordslices.sort(key=lambda coordslice: coordslice[0][2], reverse=False)
-
-            # create frameofreference based on the extents of the roi and apparent spacing
-            self.frameofreference = self.getROIExtents()
+        if roicontour and structuresetroi:
+            self._fromDicomDataset(roicontour, structuresetroi)
 
     def __repr__(self):
-        return '{!s}\n'.format(type(self)) + \
-               'roiname: {!s}\n'.format(self.roiname) + \
-               '[FrameOfReference]:\n{!s}'.format(self.frameofreference)
+        return '{!s}:\n'.format(self.__class__) + \
+               '  roiname: {!s}\n'.format(self.roiname) + \
+               '  {!s}\n'.format(self.frameofreference)
 
     @staticmethod
     def _loadRtstructDicom(rtstruct_path):
@@ -182,6 +161,36 @@ class ROI:
         elif (os.path.isfile(rtstruct_path)):
             ds = dcmio.read_dicom(rtstruct_path)
         return ds
+
+    def _fromDicomDataset(self, roicontour, structuresetroi):
+        """takes FrameOfReference object and roicontour/structuresetroi dicom dataset objects and stores
+        sorted contour data
+
+        Args:
+            roicontour         -- dicom dataset containing contour point coords for all slices
+            structuresetroi    -- dicom dataset containing additional information about contour
+        """
+        self.roinumber = int(structuresetroi.ROINumber)
+        self.refforuid = str(structuresetroi.ReferencedFrameOfReferenceUID)
+        self.roiname = str(structuresetroi.ROIName)
+
+        # Populate list of coordslices, each containing a list of ordered coordinate points
+        contoursequence = roicontour.ContourSequence
+        if (len(contoursequence) <= 0):
+            logger.debug('no coordinates found in roi: {:s}'.format(self.roiname))
+        else:
+            logger.debug('loading roi: {:s} with {:d} slices'.format(self.roiname, len(roicontour.ContourSequence)))
+            for coordslice in roicontour.ContourSequence:
+                points_list = []
+                for x, y, z in misc.grouper(3, coordslice.ContourData):
+                    points_list.append( (x, y, z) )
+                self.coordslices.append(points_list)
+
+            # sort by slice position in ascending order (inferior -> superior)
+            self.coordslices.sort(key=lambda coordslice: coordslice[0][2], reverse=False)
+
+            # create frameofreference based on the extents of the roi and apparent spacing
+            self.frameofreference = self.getROIExtents()
 
     @classmethod
     def collectionFromFile(cls, rtstruct_path):
@@ -441,6 +450,7 @@ class ROI:
 
     def toPickle(self, path):
         """convenience function for storing ROI to pickle file"""
+        warnings.warn('ROI.toPickle() will be deprecated soon in favor of other serialization methods.', DeprecationWarning)
         _dirname = os.path.dirname(path)
         if (_dirname and _dirname is not ''):
             os.makedirs(_dirname, exist_ok=True)
@@ -450,8 +460,55 @@ class ROI:
     @staticmethod
     def fromPickle(path):
         """convenience function for restoring ROI from pickle file"""
+        warnings.warn('ROI.fromPickle() will be deprecated soon in favor of other serialization methods.', DeprecationWarning)
         with open(path, 'rb') as p:
             return pickle.load(p)
+
+    def toHDF5(self, path):
+        """serialize object to file in h5 format"""
+        path = ensure_extension(path, '.h5')
+        with h5py.File(path, 'w') as f:
+            # store attributes
+            f.attrs['roinumber'] = self.roinumber
+            f.attrs['roiname'] = self.roiname
+            f.attrs['refforuid'] = self.refforuid
+            f.attrs['FrameOfReference.start'] = self.frameofreference.start
+            f.attrs['FrameOfReference.spacing'] = self.frameofreference.spacing
+            f.attrs['FrameOfReference.size'] = self.frameofreference.size
+            f.attrs['fileversion'] = '1.0'
+
+            # store datasets
+            g = f.create_group('coordslices')
+            g.attrs['Nslices'] = len(self.coordslices)
+            for i, slice in enumerate(self.coordslices):
+                arr = np.array(slice)
+                g.create_dataset('{:d}'.format(i), data=arr)
+
+    @classmethod
+    def fromHDF5(cls, path):
+        """reconstruct object from serialized data in h5 format"""
+        self = cls()
+        with h5py.File(path, 'r') as f:
+            self.roinumber = int(f.attrs['roinumber'])
+            self.roiname = str(f.attrs['roiname'])
+            self.refforuid = str(f.attrs['refforuid'])
+            self.frameofreference = FrameOfReference(
+                tuple(f.attrs['FrameOfReference.start']),
+                tuple(f.attrs['FrameOfReference.spacing']),
+                tuple(f.attrs['FrameOfReference.size'])
+            )
+            self.coordslices = []
+            for k in sorted(f['coordslices'].keys()):
+                points = []
+                data = f['coordslices'][k]
+                npdata = np.empty(data.shape, dtype=data.dtype)
+                data.read_direct(npdata)
+                for i in range(data.shape[0]):
+                    points.append(tuple(npdata[i, :]))
+                self.coordslices.append(points)
+        return self
+
+
 
 class BaseVolume:
     """Defines basic storage for volumetric voxel intensities within a dicom FrameOfReference
@@ -461,18 +518,71 @@ class BaseVolume:
         """
         self.array = None
         self.frameofreference = None
-        self.rescaleparams = None
+        self._rescaleparams = None
         self.modality = None
         self.feature_label = None
 
     def __repr__(self):
-        return '{!s}\n'.format(type(self)) + \
-               'modality: {!s}\n'.format(self.modality) + \
-               'feature_label: {!s}\n'.format(self.feature_label) + \
-               '[FrameOfReference]:\n{!s}\n'.format(self.frameofreference) + \
-               '[RescaleParams]:\n{!s}'.format(self.rescaleparams)
+        return '{!s}:\n'.format(self.__class__) + \
+               '  modality: {!s}\n'.format(self.modality) + \
+               '  feature_label: {!s}\n'.format(self.feature_label) + \
+               '  {!s}\n'.format(self.frameofreference) + \
+               '  {!s}\n'.format(self.rescaleparams)
+
+    @property
+    def rescaleparams(self):
+        if (not self._rescaleparams):
+            return RescaleParams(1, 0)
+        else:
+            return self._rescaleparams
+
+    @rescaleparams.setter
+    def rescaleparams(self, val):
+        if not isinstance(val, RescaleParams):
+            raise TypeError("{!s} may only be set with a valid RescaleParams instance".format(__name__))
+        self._rescaleparams = val
 
     # CONSTRUCTOR METHODS
+    #  @staticmethod
+    #  def _getAttrMap():
+    #      return {
+    #          'arraydata': 'array',
+    #          'size': 'FrameOfReference.size',
+    #          'start': 'FrameOfReference.start',
+    #          'spacing': 'FrameOfReference.spacing',
+    #          'for_uid': 'FrameOfReference.uid',
+    #          'modality': 'modality',
+    #          'feature_label': 'feature_label',
+    #          'rescaleparams.scale': 'RescaleParams.scale',
+    #          'rescaleparams.offset': 'RescaleParams.offset',
+    #          'order': 'ZYX'
+    #      }
+
+    #  @classmethod
+    #  def _fromDataDict(cls, datadict):
+    #      """constructor helper that standardized construction from different filetypes using a common mapping
+    #      """
+    #      self = cls() # instantiate
+    #      invertattrs = (datadict.pop('order', default='ZYX') == 'ZYX')
+    #      attrmap = BaseVolume._getAttrMap()
+    #      for k, v in datadict.items():
+    #          self.__setattr__(attrmap[k], v)
+
+    def _getDataDict(self):
+        xstr = misc.xstr  # shorter call-name for use in function
+        return {'arraydata':     self.array,
+                'size':          self.frameofreference.size[::-1],
+                'start':         self.frameofreference.start[::-1],
+                'spacing':       self.frameofreference.spacing[::-1],
+                'for_uid':       xstr(self.frameofreference.UID),
+                'modality':      xstr(self.modality),
+                'feature_label': xstr(self.feature_label),
+                'scale':         self.rescaleparams.scale,
+                'offset':        self.rescaleparams.offset,
+                'order':         'ZYX'
+                }
+
+
     @classmethod
     def fromArray(cls, array, frameofreference):
         """Constructor: from a numpy array and FrameOfReference object
@@ -495,13 +605,11 @@ class BaseVolume:
         Args:
             recursive -- find dicom files in all subdirectories?
         """
-        self = cls()
-
         # get the datasets from files
         dataset_list = dcmio.read_dicom_dir(path, recursive=recursive)
 
         # pass dataset list to constructor
-        self.fromDatasetList(dataset_list)
+        self = cls.fromDatasetList(dataset_list)
 
         return self
 
@@ -538,11 +646,13 @@ class BaseVolume:
         return cls.fromArray(vol, frameofreference)
 
 
-    def fromDatasetList(self, dataset_list):
+    @classmethod
+    def fromDatasetList(cls, dataset_list):
         """constructor: takes a list of dicom slice datasets and builds a BaseVolume array
         Args:
             slices
         """
+        self = cls()
         if (dataset_list is None):
             raise ValueError('no valid dataset_list provided')
 
@@ -576,11 +686,9 @@ class BaseVolume:
             size = (dataset_list[0].Columns, dataset_list[0].Rows, len(dataset_list))
 
         UID = dataset_list[0].FrameOfReferenceUID
-        try:
-            self.rescaleparams = RescaleParams(scale=dataset_list[0].RescaleSlope,
+        try: self.rescaleparams = RescaleParams(scale=dataset_list[0].RescaleSlope,
                                                offset=dataset_list[0].RescaleIntercept)
-        except:
-            self.rescaleparams = RescaleParams(scale=1, offset=0)
+        except: self.rescaleparams = RescaleParams()
 
         self.frameofreference = FrameOfReference(start, spacing, size, UID)
 
@@ -607,6 +715,7 @@ class BaseVolume:
     def fromPickle(cls, path):
         """initialize BaseVolume from unchanging format so features can be stored and recalled long term
         """
+        warnings.warn('{!s}.fromPickle() will be deprecated soon in favor of other serialization methods.'.format(cls.__name__), DeprecationWarning)
         if (not os.path.exists(path)):
             logger.info('file at path: {:s} doesn\'t exists'.format(path))
         with open(path, 'rb') as p:
@@ -633,6 +742,7 @@ class BaseVolume:
     def toPickle(self, path):
         """store critical data to unchanging format that can be pickled long term
         """
+        warnings.warn('{!s}.toPickle() will be deprecated soon in favor of other serialization methods.'.format(self.__class__), DeprecationWarning)
         basevolumeserial = BaseVolumeSerial()
         basevolumeserial.startposition = self.frameofreference.start
         basevolumeserial.spacing = self.frameofreference.spacing
@@ -641,6 +751,7 @@ class BaseVolume:
         basevolumeserial.modality = self.modality
         basevolumeserial.feature_label = self.feature_label
 
+        path = ensure_extension(path, '.pickle')
         _dirname = os.path.dirname(path)
         if (_dirname and _dirname is not ''):
             os.makedirs(_dirname, exist_ok=True)
@@ -667,17 +778,6 @@ class BaseVolume:
             'offset': data['offset'].item(),
             'order': extract_str(data['order'])
         }
-        #  print('arraydata.shape: {!s}'.format(data['arraydata'].shape))
-        #  print('')
-        #  print('size: {!s}'.format(tuple(data['size'][0,:])[::-1]))
-        #  print('start: {!s}'.format(tuple(data['start'][0,:])[::-1]))
-        #  print('spacing: {!s}'.format(tuple(data['spacing'][0,:])[::-1]))
-        #  print('feature_label: {!s}'.format(extract_str(data['feature_label'])))
-        #  print('modality: {!s}'.format(extract_str(data['modality'])))
-        #  print('for_uid: {!s}'.format(extract_str(data['for_uid'])))
-        #  print('order: {!s}'.format(extract_str(data['order'])))
-        #  print('scale: {:f}'.format(data['scale'].item()))
-        #  print('offset: {:f}'.format(data['offset'].item()))
 
         # construct new volume
         self = cls()
@@ -701,31 +801,50 @@ class BaseVolume:
         Optional Args:
             compress (bool): compress dataarray at the cost of write speed
         """
-        xstr = misc.xstr  # shorter call-name for use in function
         # first represent as dictionary for savemat()
-        if (not self.rescaleparams):
-            rescaleparams = RescaleParams(1, 0)
-        else:
-            rescaleparams = self.rescaleparams
-
-        data = {'arraydata':     self.array,
-                'size':          self.frameofreference.size[::-1],
-                'start':         self.frameofreference.start[::-1],
-                'spacing':       self.frameofreference.spacing[::-1],
-                'for_uid':       xstr(self.frameofreference.UID),
-                'modality':      xstr(self.modality),
-                'feature_label': xstr(self.feature_label),
-                'scale':         rescaleparams.scale,
-                'offset':        rescaleparams.offset,
-                'order':         'ZYX'
-                }
-
-        # strip .mat extension which will be added automatically
-        #  path = path.rstrip('.mat')
+        data = self._getDataDict()
+        data['order'] = 'ZYX'
+        path = ensure_extension(path, '.mat')
 
         # write to .mat
-        scipy.io.savemat(path, data, appendmat=True, format='5', long_field_names=False,
+        scipy.io.savemat(path, data, appendmat=False, format='5', long_field_names=False,
                          do_compression=compress, oned_as='row')
+
+    def toHDF5(self, path, compress=False):
+        """store object to hdf5 file with image data stored as dataset and metadata as attributes"""
+        data = self._getDataDict()
+        arraydata = data.pop('arraydata')
+        path = ensure_extension(path, '.h5')
+        with h5py.File(path, 'w') as f:
+            for k, v in data.items():
+                f.attrs.__setitem__(k, v)
+            f.create_dataset('arraydata', data=arraydata)
+            f.attrs['fileversion'] = '1.0'
+
+    @classmethod
+    def fromHDF5(cls, path):
+        """restore objects from hdf5 file with image data stored as dataset and metadata as attributes"""
+        extract_str = misc.numpy_safe_string_from_array
+        # construct new volume
+        self = cls()
+        with h5py.File(path, 'r') as f:
+            ad = f['arraydata']
+            self.array = np.empty(ad.shape)
+            ad.read_direct(self.array)
+            self.frameofreference = FrameOfReference(
+                tuple(f.attrs['start'])[::-1],
+                tuple(f.attrs['spacing'])[::-1],
+                tuple(f.attrs['size'])[::-1],
+                extract_str(f.attrs['for_uid'])
+            )
+            self.rescaleparams = RescaleParams(
+                f.attrs['scale'].item(),
+                f.attrs['offset'].item()
+            )
+            self.modality = f.attrs['modality']
+            self.feature_label = f.attrs['feature_label']
+        return self
+
 
     # PUBLIC METHODS
     def conformTo(self, frameofreference):
