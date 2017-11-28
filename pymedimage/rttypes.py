@@ -276,9 +276,9 @@ class ROI:
             # for each list of coordinate tuples - check the slice for distance from position
             error = abs(position - slice[0][2])
             if error <= minerror:
-                if minerror != 5000:
-                   logger.info('position:{:0.3f} | slicepos:{:0.3f}'.format(position, slice[0][2]))
-                   logger.info('improved with error {:f}'.format(error))
+                #  if minerror != 5000:
+                #     logger.info('position:{:0.3f} | slicepos:{:0.3f}'.format(position, slice[0][2]))
+                #     logger.info('improved with error {:f}'.format(error))
                 minerror = error
                 coordslice = slice
                 # logger.debug('updating slice')
@@ -475,6 +475,7 @@ class ROI:
     def fromHDF5(cls, path):
         """reconstruct object from serialized data in h5 format"""
         self = cls()
+        path = ensure_extension(path, '.h5')
         with h5py.File(path, 'r') as f:
             self.roinumber = int(f.attrs['roinumber'])
             self.roiname = str(f.attrs['roiname'])
@@ -682,6 +683,7 @@ class BaseVolume:
         """initialize BaseVolume from unchanging format so features can be stored and recalled long term
         """
         warnings.warn('{!s}.fromPickle() will be deprecated soon in favor of other serialization methods.'.format(cls.__name__), DeprecationWarning)
+        path = ensure_extension(path, '.pickle')
         if (not os.path.exists(path)):
             logger.info('file at path: {:s} doesn\'t exists'.format(path))
         with open(path, 'rb') as p:
@@ -728,6 +730,7 @@ class BaseVolume:
     def fromMatlab(cls, path):
         """restore BaseVolume from .mat file that was created using BaseVolume.toMatlab()
         """
+        path = ensure_extension(path, '.mat')
         extract_str = misc.numpy_safe_string_from_array
         data = scipy.io.loadmat(path, appendmat=True)
         #  for key, obj in data.items():
@@ -791,6 +794,7 @@ class BaseVolume:
         extract_str = misc.numpy_safe_string_from_array
         # construct new volume
         self = cls()
+        path = ensure_extension(path, '.h5')
         with h5py.File(path, 'r') as f:
             ad = f['arraydata']
             self.array = np.empty(ad.shape)
