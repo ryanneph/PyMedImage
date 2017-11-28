@@ -21,15 +21,12 @@
 #include "math.h"
 #include <stdio.h>
 
-/*#include "local_feature_stats/glcm.h"*/
-/*#include "local_feature_stats/glrm.h"*/
-
 // arbitrarily small number used to alleviate log(0) errors as log(0+eps)
 __device__ float eps = 1e-16;
 
 /* FORWARD DECLARATIONS */
-__device__ float mean_plugin_gpu(float *array);
-__device__ float stddev_plugin_gpu(float *array, int dof=1);
+__device__ float kernel_fo_mean(float *array);
+__device__ float kernel_fo_stddev(float *array, int dof=1);
 
 /* UTILITIES */
 namespace rn {
@@ -57,7 +54,7 @@ namespace rn {
     }
 }
 
-__device__ void _quantize_fixed_gpu(float *array) {
+__device__ void _quantize_fixed(float *array) {
     /* bin definitions are as follows (11 bins total)
      * x < -100
      * -100 <= x < 350 ( in 25HU increments -> 9 bins )
@@ -69,13 +66,13 @@ __device__ void _quantize_fixed_gpu(float *array) {
         array[i] = fminf(NBINS-1, fmaxf(0, floorf((array[i]-FIXED_START)/(FIXED_BINWIDTH))+1));
     }
 }
-__device__ void _quantize_stat_gpu(float *array) {
+__device__ void _quantize_stat(float *array) {
     // quantize the array into nbins, placing lower 2.5% and upper 2.5% residuals of gaussian
     // distribution into first and last bins respectively
 
     // gaussian stats
-    float f_mean = mean_plugin_gpu(array);
-    float f_std = stddev_plugin_gpu(array, 1);
+    float f_mean = kernel_fo_mean(array);
+    float f_std = kernel_fo_stddev(array, 1);
     float f_binwidth = 2*NDEV*f_std / (NBINS-2);
     //printf("mean:%f std:%f width:%f\\n", f_mean, f_std, f_binwidth);
 
@@ -84,24 +81,24 @@ __device__ void _quantize_stat_gpu(float *array) {
         array[i] = fminf(NBINS-1, fmaxf(0, floorf(((array[i] - f_mean + NDEV*f_std)/(f_binwidth+1e-9)) + 1)));
     }
 }
-__device__ void quantize_gpu(float *array) {
+__device__ void quantize(float *array) {
     /* quantize mode selector
     */
     if (QUANTIZE_MODE == 0) {
         // NBINS defines -binwidth in HU
-        _quantize_fixed_gpu(array);
+        _quantize_fixed(array);
     } else if (QUANTIZE_MODE == 1){
         // NBINS defines total number of bins
-        _quantize_stat_gpu(array);
+        _quantize_stat(array);
     }
 }
 
 /* FIRST ORDER STATISTICS */
-__device__ float entropy_plugin_gpu(float *patch_array) {
+__device__ float kernel_fo_entropy(float *patch_array) {
     // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
     int size = PATCH_SIZE;
 
-    quantize_gpu(patch_array);
+    quantize(patch_array);
 
     // count intensity occurences
     int hist[NBINS];
@@ -119,11 +116,11 @@ __device__ float entropy_plugin_gpu(float *patch_array) {
     }
     return stat;
 }
-__device__ float uniformity_plugin_gpu(float *patch_array) {
+__device__ float kernel_fo_uniformity(float *patch_array) {
     // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
     int size = PATCH_SIZE;
 
-    quantize_gpu(patch_array);
+    quantize(patch_array);
 
     // count intensity occurences
     int hist[NBINS];
@@ -142,7 +139,7 @@ __device__ float uniformity_plugin_gpu(float *patch_array) {
 
     return sqrtf(stat);
 }
-__device__ float energy_plugin_gpu(float *patch_array) {
+__device__ float kernel_fo_energy(float *patch_array) {
     // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
     int size = PATCH_SIZE;
 
@@ -153,7 +150,7 @@ __device__ float energy_plugin_gpu(float *patch_array) {
     }
     return stat;
 }
-__device__ float mean_plugin_gpu(float *patch_array) {
+__device__ float kernel_fo_mean(float *patch_array) {
     int size = PATCH_SIZE;
 
     float stat = 0.0f;
@@ -162,7 +159,7 @@ __device__ float mean_plugin_gpu(float *patch_array) {
     }
     return (stat/size);
 }
-__device__ float min_plugin_gpu(float *patch_array) {
+__device__ float kernel_fo_min(float *patch_array) {
     int size = PATCH_SIZE;
 
     float stat = patch_array[0];
@@ -171,7 +168,7 @@ __device__ float min_plugin_gpu(float *patch_array) {
     }
     return stat;
 }
-__device__ float max_plugin_gpu(float *patch_array) {
+__device__ float kernel_fo_max(float *patch_array) {
     int size = PATCH_SIZE;
 
     float stat = patch_array[0];
@@ -180,12 +177,12 @@ __device__ float max_plugin_gpu(float *patch_array) {
     }
     return stat;
 }
-__device__ float kurtosis_plugin_gpu(float *patch_array) {
+__device__ float kernel_fo_kurtosis(float *patch_array) {
     int size = PATCH_SIZE;
 
     // get the mean
-    float mu = mean_plugin_gpu(patch_array);
-    float stddev = stddev_plugin_gpu(patch_array, 0);
+    float mu = kernel_fo_mean(patch_array);
+    float stddev = kernel_fo_stddev(patch_array, 0);
 
     // compute the kurtosis
     float num = 0.0f;
@@ -194,12 +191,12 @@ __device__ float kurtosis_plugin_gpu(float *patch_array) {
     }
     return ((1.0f/size)*num) / (powf(stddev, 2));
 }
-__device__ float skewness_plugin_gpu(float *patch_array) {
+__device__ float kernel_fo_skewness(float *patch_array) {
     int size = PATCH_SIZE;
 
     // get the mean
-    float mu = mean_plugin_gpu(patch_array);
-    float stddev = stddev_plugin_gpu(patch_array, 0);
+    float mu = kernel_fo_mean(patch_array);
+    float stddev = kernel_fo_stddev(patch_array, 0);
 
     // compute the kurtosis
     float num = 0.0f;
@@ -208,7 +205,7 @@ __device__ float skewness_plugin_gpu(float *patch_array) {
     }
     return ((1.0f/size)*num) / (powf(stddev, 3));
 }
-__device__ float rms_plugin_gpu(float *patch_array) {
+__device__ float kernel_fo_rms(float *patch_array) {
     int size = PATCH_SIZE;
 
     float stat = 0.0f;
@@ -217,12 +214,12 @@ __device__ float rms_plugin_gpu(float *patch_array) {
     }
     return sqrtf(stat/size);
 }
-__device__ float variance_plugin_gpu(float *array, int dof=1) {
+__device__ float kernel_fo_variance(float *array, int dof=1) {
     // PATCH_SIZE macro in division doesn't work so we introduce local stack var to overcome
     int size = PATCH_SIZE;
 
     // get the mean
-    float mu = mean_plugin_gpu(array);
+    float mu = kernel_fo_mean(array);
 
     // compute the std. deviation
     float stat = 0.0f;
@@ -231,15 +228,15 @@ __device__ float variance_plugin_gpu(float *array, int dof=1) {
     }
     return (stat / (size-dof));
 }
-__device__ float stddev_plugin_gpu(float *array, int dof) {
-    return sqrtf(variance_plugin_gpu(array, dof));
+__device__ float kernel_fo_stddev(float *array, int dof) {
+    return sqrtf(kernel_fo_variance(array, dof));
 }
-__device__ float range_plugin_gpu(float *array) {
-    return (max_plugin_gpu(array) - min_plugin_gpu(array));
+__device__ float kernel_fo_range(float *array) {
+    return (kernel_fo_max(array) - kernel_fo_min(array));
 }
-__device__ float meanabsdev_plugin_gpu(float *patch_array) {
+__device__ float kernel_fo_meanabsdev(float *patch_array) {
     int size = PATCH_SIZE;
-    float mu = mean_plugin_gpu(patch_array);
+    float mu = kernel_fo_mean(patch_array);
 
     float stat = 0.0f;
     for (int i=0; i<size; i++) {
@@ -379,7 +376,7 @@ namespace rn {
     }
 }
 __device__ const bool glcm_symmetric = true;
-__device__ void glcm_matrix_gpu(float *mat, float *array) {
+__device__ void glcm_matrix(float *mat, float *array) {
     //OPTIONS
 
     // compute glcm matrix in the specified directions
@@ -434,7 +431,7 @@ __device__ void glcm_normalizeInPlace(float *glcm_mat) {
         glcm_mat[i] /= ncounts;
     }
 }
-__device__ float glcm_stat_contrast_gpu(float* glcm_mat) {
+__device__ float stat_glcm_contrast(float* glcm_mat) {
     // calculate statistic on glcm matrix of size NBINS*NBINS
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0;
@@ -448,7 +445,7 @@ __device__ float glcm_stat_contrast_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_dissimilarity_gpu(float* glcm_mat) {
+__device__ float stat_glcm_dissimilarity(float* glcm_mat) {
     // calculate statistic on glcm matrix of size NBINS*NBINS
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0;
@@ -462,7 +459,7 @@ __device__ float glcm_stat_dissimilarity_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_energy_gpu(float* glcm_mat) {
+__device__ float stat_glcm_energy(float* glcm_mat) {
     // calculate statistic on glcm matrix of size NBINS*NBINS
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0;
@@ -474,7 +471,7 @@ __device__ float glcm_stat_energy_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_homogeneity_gpu(float* glcm_mat) {
+__device__ float stat_glcm_homogeneity(float* glcm_mat) {
     // calculate statistic on glcm matrix of size NBINS*NBINS
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0;
@@ -488,7 +485,7 @@ __device__ float glcm_stat_homogeneity_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_homogeneity1_gpu(float* glcm_mat) {
+__device__ float stat_glcm_homogeneity1(float* glcm_mat) {
     // calculate statistic on glcm matrix of size NBINS*NBINS
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0;
@@ -499,7 +496,7 @@ __device__ float glcm_stat_homogeneity1_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_autocorrelation_gpu(float* glcm_mat) {
+__device__ float stat_glcm_autocorrelation(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0;
     for (int i=0; i<GLCM_SIZE; i++) {
@@ -509,7 +506,7 @@ __device__ float glcm_stat_autocorrelation_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_clusterprominence_gpu(float* glcm_mat) {
+__device__ float stat_glcm_clusterprominence(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0;
     for (int i=0; i<GLCM_SIZE; i++) {
@@ -519,7 +516,7 @@ __device__ float glcm_stat_clusterprominence_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_clustershade_gpu(float* glcm_mat) {
+__device__ float stat_glcm_clustershade(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0;
     for (int i=0; i<GLCM_SIZE; i++) {
@@ -529,7 +526,7 @@ __device__ float glcm_stat_clustershade_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_clustertendency_gpu(float* glcm_mat) {
+__device__ float stat_glcm_clustertendency(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0;
     for (int i=0; i<GLCM_SIZE; i++) {
@@ -539,7 +536,7 @@ __device__ float glcm_stat_clustertendency_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_correlation_gpu(float* glcm_mat) {
+__device__ float stat_glcm_correlation(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0;
     for (int i=0; i<GLCM_SIZE; i++) {
@@ -550,7 +547,7 @@ __device__ float glcm_stat_correlation_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_sumentropy_gpu(float* glcm_mat) {
+__device__ float stat_glcm_sumentropy(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0;
     for (int k=2; k<=NBINS*2; k++) {
@@ -559,7 +556,7 @@ __device__ float glcm_stat_sumentropy_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_differenceentropy_gpu(float* glcm_mat) {
+__device__ float stat_glcm_differenceentropy(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0;
     for (int k=0; k<NBINS; k++) {
@@ -568,12 +565,12 @@ __device__ float glcm_stat_differenceentropy_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_entropy_gpu(float* glcm_mat) {
+__device__ float stat_glcm_entropy(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     return rn::glcm_HXY(glcm_mat);
 }
 //######### ADD ALL BELOW
-__device__ float glcm_stat_avgintensity_gpu(float* glcm_mat) {
+__device__ float stat_glcm_avgintensity(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0.0f;
     for (int i=0; i<GLCM_SIZE; i++) {
@@ -581,15 +578,15 @@ __device__ float glcm_stat_avgintensity_gpu(float* glcm_mat) {
     }
    return accum;
 }
-__device__ float glcm_stat_differenceavg_gpu(float* glcm_mat) {
+__device__ float stat_glcm_differenceavg(float* glcm_mat) {
     float accum = 0.0f;
     for (int k=0; k<NBINS; k++) {
         accum += k*rn::glcm_marginal_Pxminusy(glcm_mat, k);
     }
     return accum;
 }
-__device__ float glcm_stat_differencevariance_gpu(float* glcm_mat) {
-    float DA = glcm_stat_differenceavg_gpu(glcm_mat);
+__device__ float stat_glcm_differencevariance(float* glcm_mat) {
+    float DA = stat_glcm_differenceavg(glcm_mat);
     float accum = 0;
     for (int k=0; k<NBINS; k++) {
         float val = rn::glcm_marginal_Pxminusy(glcm_mat, k);
@@ -597,15 +594,15 @@ __device__ float glcm_stat_differencevariance_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_imc1_gpu(float* glcm_mat) {
+__device__ float stat_glcm_imc1(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     return (rn::glcm_HXY(glcm_mat) - rn::glcm_HXY1(glcm_mat)) / fmaxf(rn::glcm_HX(glcm_mat), rn::glcm_HY(glcm_mat));
 }
-__device__ float glcm_stat_imc2_gpu(float* glcm_mat) {
+__device__ float stat_glcm_imc2(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     return sqrtf(1-expf(-2*(rn::glcm_HXY2(glcm_mat) - rn::glcm_HXY(glcm_mat))));
 }
-__device__ float glcm_stat_idm_gpu(float* glcm_mat) {
+__device__ float stat_glcm_idm(float* glcm_mat) {
     float accum = 0.0f;
     for (int i=0; i<GLCM_SIZE; i++) {
         int y = rn::glcm_getY(i);
@@ -614,7 +611,7 @@ __device__ float glcm_stat_idm_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_idmn_gpu(float* glcm_mat) {
+__device__ float stat_glcm_idmn(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0.0f;
     for (int i=0; i<GLCM_SIZE; i++) {
@@ -624,7 +621,7 @@ __device__ float glcm_stat_idmn_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_id_gpu(float* glcm_mat) {
+__device__ float stat_glcm_id(float* glcm_mat) {
     float accum = 0.0f;
     for (int i=0; i<GLCM_SIZE; i++) {
         int y = rn::glcm_getY(i);
@@ -633,7 +630,7 @@ __device__ float glcm_stat_id_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_idn_gpu(float* glcm_mat) {
+__device__ float stat_glcm_idn(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0.0f;
     for (int i=0; i<GLCM_SIZE; i++) {
@@ -643,7 +640,7 @@ __device__ float glcm_stat_idn_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_inversevariance_gpu(float* glcm_mat) {
+__device__ float stat_glcm_inversevariance(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0.0f;
     for (int i=0; i<GLCM_SIZE; i++) {
@@ -655,7 +652,7 @@ __device__ float glcm_stat_inversevariance_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_maxprob_gpu(float* glcm_mat) {
+__device__ float stat_glcm_maxprob(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float maxval = 0.0f;
     for (int i=0; i<GLCM_SIZE; i++) {
@@ -666,7 +663,7 @@ __device__ float glcm_stat_maxprob_gpu(float* glcm_mat) {
     }
     return maxval;
 }
-__device__ float glcm_stat_sumavg_gpu(float* glcm_mat) {
+__device__ float stat_glcm_sumavg(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0.0f;
     for (int k=2; k<=2*NBINS; k++) {
@@ -674,8 +671,8 @@ __device__ float glcm_stat_sumavg_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_sumvariance_gpu(float* glcm_mat) {
-    float SE = glcm_stat_sumentropy_gpu(glcm_mat);
+__device__ float stat_glcm_sumvariance(float* glcm_mat) {
+    float SE = stat_glcm_sumentropy(glcm_mat);
     float accum = 0;
     for (int k=2; k<=2*NBINS; k++) {
         float val = rn::glcm_marginal_Pxplusy(glcm_mat, k);
@@ -683,8 +680,8 @@ __device__ float glcm_stat_sumvariance_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_sumvariance2_gpu(float* glcm_mat) {
-    float SA = glcm_stat_sumentropy_gpu(glcm_mat);
+__device__ float stat_glcm_sumvariance2(float* glcm_mat) {
+    float SA = stat_glcm_sumentropy(glcm_mat);
     float accum = 0;
     for (int k=2; k<=2*NBINS; k++) {
         float val = rn::glcm_marginal_Pxplusy(glcm_mat, k);
@@ -692,7 +689,7 @@ __device__ float glcm_stat_sumvariance2_gpu(float* glcm_mat) {
     }
     return accum;
 }
-__device__ float glcm_stat_sumsquares_gpu(float* glcm_mat) {
+__device__ float stat_glcm_sumsquares(float* glcm_mat) {
     glcm_normalizeInPlace(glcm_mat);
     float accum = 0.0f;
     for (int i=0; i<GLCM_SIZE; i++) {
@@ -731,7 +728,7 @@ namespace rn {
         return accum;
     }
 }
-__device__ void glrlm_matrix_gpu(float *mat, float *array) {
+__device__ void glrlm_matrix(float *mat, float *array) {
     /*
       run length
        1  2  3  4  5 ... N
@@ -797,7 +794,7 @@ __device__ void glrlm_normalize_matrix(float *norm_mat, float *mat) {
         norm_mat[i] = mat[i]/ncounts;
     }
 }
-__device__ float glrlm_stat_sre_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_sre(float* glrlm_mat) {
     // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
     float accum = 0.0f;
     for (int i=0; i<GLRLM_SIZE; i++) {
@@ -805,7 +802,7 @@ __device__ float glrlm_stat_sre_gpu(float* glrlm_mat) {
     }
     return accum/rn::glrlm_sumP(glrlm_mat);
 }
-__device__ float glrlm_stat_lre_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_lre(float* glrlm_mat) {
     // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
     float accum = 0.0f;
     for (int i=0; i<GLRLM_SIZE; i++) {
@@ -813,7 +810,7 @@ __device__ float glrlm_stat_lre_gpu(float* glrlm_mat) {
     }
     return accum/rn::glrlm_sumP(glrlm_mat);
 }
-__device__ float glrlm_stat_gln_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_gln(float* glrlm_mat) {
     // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
     float accum = 0.0f;
     for (int y=0; y<NBINS; y++) {
@@ -825,7 +822,7 @@ __device__ float glrlm_stat_gln_gpu(float* glrlm_mat) {
     }
     return accum/rn::glrlm_sumP(glrlm_mat);
 }
-__device__ float glrlm_stat_glnn_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_glnn(float* glrlm_mat) {
     // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
     float accum = 0.0f;
     for (int y=0; y<NBINS; y++) {
@@ -837,7 +834,7 @@ __device__ float glrlm_stat_glnn_gpu(float* glrlm_mat) {
     }
     return accum/rn::glrlm_sumSqP(glrlm_mat);
 }
-__device__ float glrlm_stat_rln_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_rln(float* glrlm_mat) {
     // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
     float accum = 0.0f;
     for (int x=0; x<MAXRUNLENGTH; x++) {
@@ -849,7 +846,7 @@ __device__ float glrlm_stat_rln_gpu(float* glrlm_mat) {
     }
     return accum/rn::glrlm_sumP(glrlm_mat);
 }
-__device__ float glrlm_stat_rlnn_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_rlnn(float* glrlm_mat) {
     // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
     float accum = 0.0f;
     for (int x=0; x<MAXRUNLENGTH; x++) {
@@ -861,12 +858,12 @@ __device__ float glrlm_stat_rlnn_gpu(float* glrlm_mat) {
     }
     return accum/rn::glrlm_sumSqP(glrlm_mat);
 }
-__device__ float glrlm_stat_rp_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_rp(float* glrlm_mat) {
     // calculate statistic on glrlm matrix of size NBINS*MAXRUNLENGTH
     float accum = rn::glrlm_sumP(glrlm_mat);
     return accum/PATCH_SIZE;
 }
-__device__ float glrlm_stat_glv_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_glv(float* glrlm_mat) {
     float norm_mat[GLRLM_SIZE];
     glrlm_normalize_matrix(norm_mat, glrlm_mat);
     float accum = 0.0f;
@@ -879,7 +876,7 @@ __device__ float glrlm_stat_glv_gpu(float* glrlm_mat) {
     }
     return accum;
 }
-__device__ float glrlm_stat_rv_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_rv(float* glrlm_mat) {
     float norm_mat[GLRLM_SIZE];
     glrlm_normalize_matrix(norm_mat, glrlm_mat);
     float accum = 0.0f;
@@ -892,7 +889,7 @@ __device__ float glrlm_stat_rv_gpu(float* glrlm_mat) {
     }
     return accum;
 }
-__device__ float glrlm_stat_re_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_re(float* glrlm_mat) {
     float norm_mat[GLRLM_SIZE];
     glrlm_normalize_matrix(norm_mat, glrlm_mat);
     float accum = 0.0f;
@@ -901,42 +898,42 @@ __device__ float glrlm_stat_re_gpu(float* glrlm_mat) {
     }
     return accum;
 }
-__device__ float glrlm_stat_lglre_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_lglre(float* glrlm_mat) {
     float accum = 0.0f;
     for (int i=0; i<GLRLM_SIZE; i++) {
         accum += glrlm_mat[i]/powf(rn::glrlm_getY(i)+1, 2);
     }
     return accum/rn::glrlm_sumP(glrlm_mat);
 }
-__device__ float glrlm_stat_hglre_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_hglre(float* glrlm_mat) {
     float accum = 0.0f;
     for (int i=0; i<GLRLM_SIZE; i++) {
         accum += glrlm_mat[i]*powf(rn::glrlm_getY(i)+1, 2);
     }
     return accum/rn::glrlm_sumP(glrlm_mat);
 }
-__device__ float glrlm_stat_srlgle_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_srlgle(float* glrlm_mat) {
     float accum = 0.0f;
     for (int i=0; i<GLRLM_SIZE; i++) {
         accum += glrlm_mat[i]/powf(rn::glrlm_getY(i)+1 + rn::glrlm_getX(i)+1, 2);
     }
     return accum/rn::glrlm_sumP(glrlm_mat);
 }
-__device__ float glrlm_stat_srhgle_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_srhgle(float* glrlm_mat) {
     float accum = 0.0f;
     for (int i=0; i<GLRLM_SIZE; i++) {
         accum += glrlm_mat[i]*powf(rn::glrlm_getY(i)+1, 2)/powf(rn::glrlm_getX(i)+1, 2);
     }
     return accum/rn::glrlm_sumP(glrlm_mat);
 }
-__device__ float glrlm_stat_lrlglre_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_lrlglre(float* glrlm_mat) {
     float accum = 0.0f;
     for (int i=0; i<GLRLM_SIZE; i++) {
         accum += glrlm_mat[i]*powf(rn::glrlm_getX(i)+1, 2)/powf(rn::glrlm_getY(i)+1, 2);
     }
     return accum/rn::glrlm_sumP(glrlm_mat);
 }
-__device__ float glrlm_stat_lrhglre_gpu(float* glrlm_mat) {
+__device__ float stat_glrlm_lrhglre(float* glrlm_mat) {
     float accum = 0.0f;
     for (int i=0; i<GLRLM_SIZE; i++) {
         accum += glrlm_mat[i]*powf(rn::glrlm_getY(i)+1 + rn::glrlm_getX(i)+1, 2);
@@ -955,7 +952,7 @@ __device__ float glrlm_stat_lrhglre_gpu(float* glrlm_mat) {
 #define SSUB   $SSUB
 
 /* HAAR WAVELET FEATURES */
-__device__ float haar_plugin_oneblock_gpu(float *patch_array) {
+__device__ float haar_plugin_oneblock(float *patch_array) {
     // sum intensities in cube centered at c in patch relative to patch center with "radius" s
     unsigned int n = 0;
     float accum = 0.0f;
@@ -972,7 +969,7 @@ __device__ float haar_plugin_oneblock_gpu(float *patch_array) {
     }
     return (float)(accum/n);
 }
-__device__ float haar_plugin_twoblock_gpu(float *patch_array) {
+__device__ float haar_plugin_twoblock(float *patch_array) {
     // sum intensities in cube centered at cadd in patch relative to patch center with "radius" sadd
     // and subtract intensities in cube (csub, ssub)
     // sum intensities in cube centered at c in patch relative to patch center with "radius" s
@@ -1009,32 +1006,32 @@ __device__ float haar_plugin_twoblock_gpu(float *patch_array) {
 }
 
 
-__device__ float glcm_plugin_gpu(float *patch_array) {
+__device__ float kernel_glcm(float *patch_array) {
     // quantize patch
-    quantize_gpu(patch_array);
+    quantize(patch_array);
 
     // compute glcm matrix
     float mat[GLCM_SIZE];
     for (int i=0; i<GLCM_SIZE; i++) {
         mat[i] = 0.0f;
     }
-    glcm_matrix_gpu(mat, patch_array);
+    glcm_matrix(mat, patch_array);
 
     // compute matrix statistic
     float stat = ${STAT}(mat);
 
     return stat;
 }
-__device__ float glrlm_plugin_gpu(float *patch_array) {
+__device__ float kernel_glrlm(float *patch_array) {
     // quantize patch
-    quantize_gpu(patch_array);
+    quantize(patch_array);
 
     // compute glcm matrix
     float mat[GLRLM_SIZE];
     for (int i=0; i<GLRLM_SIZE; i++) {
         mat[i] = 0.0f;
     }
-    glrlm_matrix_gpu(mat, patch_array);
+    glrlm_matrix(mat, patch_array);
 
     // compute matrix statistic
     float stat = ${STAT}(mat);

@@ -24,19 +24,6 @@ from pymedimage.misc import ensure_extension
 # initialize module logger
 logger = logging.getLogger(__name__)
 
-class RescaleParams:
-    """Defines the scale and offset necessary for linear rescaling operation of dicom data
-    """
-    def __init__(self, scale=1, offset=0):
-        """initialize with params"""
-        self.scale = scale
-        self.offset = offset
-
-    def __repr__(self):
-        return '{!s}:\n'.format(self.__class__) + \
-               '  scale:  {:g}\n'.format(self.scale) + \
-               '  offset: {:g}\n'.format(self.offset)
-
 
 class FrameOfReference:
     """Defines a dicom frame of reference to which BaseVolumes can be conformed for fusion of pre-registered
@@ -518,7 +505,6 @@ class BaseVolume:
         """
         self.array = None
         self.frameofreference = None
-        self._rescaleparams = None
         self.modality = None
         self.feature_label = None
 
@@ -526,21 +512,7 @@ class BaseVolume:
         return '{!s}:\n'.format(self.__class__) + \
                '  modality: {!s}\n'.format(self.modality) + \
                '  feature_label: {!s}\n'.format(self.feature_label) + \
-               '  {!s}\n'.format(self.frameofreference) + \
-               '  {!s}\n'.format(self.rescaleparams)
-
-    @property
-    def rescaleparams(self):
-        if (not self._rescaleparams):
-            return RescaleParams(1, 0)
-        else:
-            return self._rescaleparams
-
-    @rescaleparams.setter
-    def rescaleparams(self, val):
-        if not isinstance(val, RescaleParams):
-            raise TypeError("{!s} may only be set with a valid RescaleParams instance".format(__name__))
-        self._rescaleparams = val
+               '  {!s}\n'.format(self.frameofreference)
 
     # CONSTRUCTOR METHODS
     #  @staticmethod
@@ -553,8 +525,6 @@ class BaseVolume:
     #          'for_uid': 'FrameOfReference.uid',
     #          'modality': 'modality',
     #          'feature_label': 'feature_label',
-    #          'rescaleparams.scale': 'RescaleParams.scale',
-    #          'rescaleparams.offset': 'RescaleParams.offset',
     #          'order': 'ZYX'
     #      }
 
@@ -577,8 +547,6 @@ class BaseVolume:
                 'for_uid':       xstr(self.frameofreference.UID),
                 'modality':      xstr(self.modality),
                 'feature_label': xstr(self.feature_label),
-                'scale':         self.rescaleparams.scale,
-                'offset':        self.rescaleparams.offset,
                 'order':         'ZYX'
                 }
 
@@ -686,10 +654,6 @@ class BaseVolume:
             size = (dataset_list[0].Columns, dataset_list[0].Rows, len(dataset_list))
 
         UID = dataset_list[0].FrameOfReferenceUID
-        try: self.rescaleparams = RescaleParams(scale=dataset_list[0].RescaleSlope,
-                                               offset=dataset_list[0].RescaleIntercept)
-        except: self.rescaleparams = RescaleParams()
-
         self.frameofreference = FrameOfReference(start, spacing, size, UID)
 
         # standardize modality labels
@@ -702,13 +666,15 @@ class BaseVolume:
         array_list = []
         for dataset in dataset_list:
             array = dataset.pixel_array
+            factor = dataset.RescaleSlope
+            offset = dataset.RescaleIntercept
+            array = np.add(np.multiply(array, factor), offset)
             array = array.reshape((1, array.shape[0], array.shape[1]))
             array_list.append(array)
 
-        # stack arrays and perform scaling/offset
-        self.array = np.concatenate(array_list, axis=0) * self.rescaleparams.scale + self.rescaleparams.offset
-        self.array = self.array.astype(int)
-
+        # stack arrays
+        self.array = np.concatenate(array_list, axis=0)
+        #  self.array = self.array.astype(int)
         return self
 
     @classmethod
@@ -786,8 +752,6 @@ class BaseVolume:
                                                  converted_data['spacing'],
                                                  converted_data['size'],
                                                  converted_data['for_uid'])
-        self.rescaleparams = RescaleParams(converted_data['scale'],
-                                           converted_data['offset'])
         self.modality = converted_data['modality']
         self.feature_label = converted_data['feature_label']
 
@@ -836,10 +800,6 @@ class BaseVolume:
                 tuple(f.attrs['spacing'])[::-1],
                 tuple(f.attrs['size'])[::-1],
                 extract_str(f.attrs['for_uid'])
-            )
-            self.rescaleparams = RescaleParams(
-                f.attrs['scale'].item(),
-                f.attrs['offset'].item()
             )
             self.modality = f.attrs['modality']
             self.feature_label = f.attrs['feature_label']
@@ -890,7 +850,6 @@ class BaseVolume:
         resampled_volume = MaskableVolume.fromArray(cropped, zoomFOR)
         resampled_volume.modality = self.modality
         resampled_volume.feature_label = self.feature_label
-        resampled_volume.rescaleparams = self.rescaleparams
         return resampled_volume
 
     def _resample(self, new_voxelsize, order=3):
@@ -917,10 +876,9 @@ class BaseVolume:
         new_vol = MaskableVolume.fromArray(zoomarray, zoomFOR)
         new_vol.modality = self.modality
         new_vol.feature_label = self.feature_label
-        new_vol.rescaleparams = self.rescaleparams
         return new_vol
 
-    def getSlice(self, idx, axis=0, rescale=False, flatten=False):
+    def getSlice(self, idx, axis=0, flatten=False):
         """Extracts 2dArray of idx along the axis.
         Args:
             idx       -- idx identifying the slice along axis
@@ -931,9 +889,6 @@ class BaseVolume:
                             axis=0 -> depth: axial slices inf->sup
                             axis=1 -> rows: coronal slices anterior->posterior
                             axis=2 -> cols: sagittal slices: pt.right->pt.left
-            rescale   -- return the element-wise rescaling of pixel_array using the formula:
-                            pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
-                            If True, use self.rescaleparams, otherwise provide a RescaleParams object
             flatten   -- return a 1darray in depth-stacked row-major order
         """
         cols, rows, depth = self.frameofreference.size
@@ -958,24 +913,11 @@ class BaseVolume:
             logger.exception('invalid axis supplied. must be between 0 -> 2')
             raise ValueError
 
-        # RESCALE
-        if (rescale is True):
-            if (self.rescaleparams is not None):
-                thisslice = self.rescaledArray(thisslice, rescale)
-            else:
-                logger.exception('No RescaleParams assigned to self.rescaleparams')
-                raise Exception
-
         # RESHAPE
         if (flatten):
             thisslice = thisslice.flatten(order='C').reshape((-1, 1))
 
         return thisslice
-
-    def rescaledArray(self, array, rescaleparams):
-        factor = float(rescaleparams.factor)
-        offset = float(rescaleparams.offset)
-        return np.add(np.multiply(array, factor), offset)
 
     def vectorize(self):
         """flatten self.array in stacked-depth row-major order
@@ -1051,7 +993,6 @@ class MaskableVolume(BaseVolume):
         copy_vol = MaskableVolume()
         copy_vol.array = copy.deepcopy(self.array)
         copy_vol.frameofreference = copy.deepcopy(self.frameofreference)
-        copy_vol.rescaleparams = copy.deepcopy(self.rescaleparams)
         copy_vol.modality = self.modality
         copy_vol.feature_label = self.feature_label
         return copy_vol
@@ -1068,13 +1009,12 @@ class MaskableVolume(BaseVolume):
         # copy attributes
         self.array = base.array
         self.frameofreference = copy.deepcopy(base.frameofreference)
-        self.rescaleparams = copy.deepcopy(base.rescaleparams)
         self.modality = base.modality
         self.feature_label = base.feature_label
         return self
 
     # PUBLIC METHODS
-    def getSlice(self, idx, axis=0, rescale=False, flatten=False, roi=None):
+    def getSlice(self, idx, axis=0, flatten=False, roi=None):
         """Extracts 2dArray of idx along the axis.
         Args:
             idx     -- idx identifying the slice along axis
@@ -1085,18 +1025,15 @@ class MaskableVolume(BaseVolume):
                             axis=0 -> depth: axial slices inf->sup
                             axis=1 -> rows: coronal slices anterior->posterior
                             axis=2 -> cols: sagittal slices: pt.right->pt.left
-            rescale -- return the element-wise rescaling of pixel_array using the formula:
-                            pixel[i] = pixel[i] * rescaleSlope() + rescaleIntercept()
-                        If True, use self.rescaleparams, otherwise provide a RescaleParams object
             flatten -- return a 1darray in depth-stacked row-major order
             roi     -- ROI object that can be supplied to mask the output of getSlice
          """
         # call to base class
-        slicearray = super().getSlice(idx, axis, rescale, flatten)
+        slicearray = super().getSlice(idx, axis, flatten)
 
         # get equivalent slice from densemaskarray
         if (roi is not None):
-            maskslicearray = roi.makeDenseMask(self.frameofreference).getSlice(idx, axis, rescale, flatten)
+            maskslicearray = roi.makeDenseMask(self.frameofreference).getSlice(idx, axis, flatten)
             # apply mask
             slicearray = np.multiply(slicearray, maskslicearray)
 

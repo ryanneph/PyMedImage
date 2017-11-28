@@ -194,3 +194,11 @@ class MultiprocessManager_CalculateFeatures(MultiprocessManagerBase):
             for local_feature_def in feature_def_list:
                 argmap.append((doi, local_feature_def))
         MultiprocessManagerBase.execute(self, argmap)
+
+    def debug(self, doi_list, feature_def_list):
+        argmap = []
+        for doi in doi_list:
+            for local_feature_def in feature_def_list:
+                argmap.append((doi, local_feature_def))
+        MultiprocessManagerBase.debug(self, argmap)
+

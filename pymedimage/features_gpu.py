@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 ####################################################################################################
 # LOCAL FEATURE COMPOSITIONS
 ####################################################################################################
-def elementwiseMean_gpu(feature_volume_list):
+def elementwise_composition_gpu(feature_volume_list, comp_type='elementwiseMean'):
     """computes the elementwise mean of the like-shaped volumes in feature_volume_list"""
     # initialize cuda context
     cuda.init()
@@ -36,7 +36,7 @@ def elementwiseMean_gpu(feature_volume_list):
                            options=['-I {!s}'.format(parent_dir),
                                     # '-g', '-G', '-lineinfo'
                                     ])
-    func = mod.get_function('elementwiseMean')
+    func = mod.get_function(comp_type)
 
     # combine volumes into linearized array
     FOR = feature_volume_list[0].frameofreference
@@ -77,6 +77,11 @@ def elementwiseMean_gpu(feature_volume_list):
     x = MaskableVolume().fromArray(result, FOR)
     x.modality = feature_volume_list[0].modality
     return x
+
+def elementwiseMean_gpu(feature_volume_list):
+    return elementwise_composition_gpu(feature_volume_list, comp_type='elementwiseMean')
+def elementwiseMax_gpu(feature_volume_list):
+    return elementwise_composition_gpu(feature_volume_list, comp_type='elementwiseMax')
 ####################################################################################################
 
 
@@ -85,7 +90,7 @@ def elementwiseMean_gpu(feature_volume_list):
 ####################################################################################################
 def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwidth=None, dx=1, dy=0, dz=0, ndev=2,
                        cadd=(0,0,0), sadd=3, csub=(0,0,0), ssub=3, i=0,
-             feature_kernel='glcm_plugin_gpu', stat_name='glcm_stat_contrast_gpu'):
+             feature_kernel='kernel_glcm', stat_name='stat_glcm_contrast'):
     """Uses PyCuda to parallelize the computation of the voxel-wise image entropy using a variable \
             neighborhood radius
 
