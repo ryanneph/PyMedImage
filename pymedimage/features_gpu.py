@@ -82,6 +82,8 @@ def elementwiseMean_gpu(feature_volume_list):
     return elementwise_composition_gpu(feature_volume_list, comp_type='elementwiseMean')
 def elementwiseMax_gpu(feature_volume_list):
     return elementwise_composition_gpu(feature_volume_list, comp_type='elementwiseMax')
+def elementwiseMin_gpu(feature_volume_list):
+    return elementwise_composition_gpu(feature_volume_list, comp_type='elementwiseMin')
 ####################################################################################################
 
 

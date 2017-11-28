@@ -271,14 +271,14 @@ class ROI:
         minerror = 5000
         coordslice = None
         ### REVISIT THE CORRECT SETTING OF TOLERANCE TODO
-        tolerance = self.frameofreference.spacing[2]*4 - 1e-9  # if upsampling too much then throw error
+        tolerance = self.frameofreference.spacing[2]*1.5 - 1e-9  # if upsampling too much then throw error
         for slice in self.coordslices:
             # for each list of coordinate tuples - check the slice for distance from position
             error = abs(position - slice[0][2])
             if error <= minerror:
-                # if minerror != 5000:
-                #     logger.debug('position:{:0.3f} | slicepos:{:0.3f}'.format(position, slice[0][2]))
-                #     logger.debug('improved with error {:f}'.format(error))
+                if minerror != 5000:
+                   logger.info('position:{:0.3f} | slicepos:{:0.3f}'.format(position, slice[0][2]))
+                   logger.info('improved with error {:f}'.format(error))
                 minerror = error
                 coordslice = slice
                 # logger.debug('updating slice')
@@ -469,7 +469,7 @@ class ROI:
             g.attrs['Nslices'] = len(self.coordslices)
             for i, slice in enumerate(self.coordslices):
                 arr = np.array(slice)
-                g.create_dataset('{:d}'.format(i), data=arr)
+                g.create_dataset('{:04d}'.format(i), data=arr)
 
     @classmethod
     def fromHDF5(cls, path):
