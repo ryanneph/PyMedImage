@@ -15,7 +15,7 @@ def ensure_extension(fname, ext):
     # prepare extension with leading dot
     ext = '.' + ext.lstrip('.')
     # guarantee only one instance of extension
-    return fname.rstrip(ext) + ext
+    return fname.rstrip(os.path.splitext(fname)[1]) + ext
 
 def xstr(s):
     """replace None with '' (empty string)"""

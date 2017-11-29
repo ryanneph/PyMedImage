@@ -29,7 +29,7 @@ class FrameOfReference:
     """Defines a dicom frame of reference to which BaseVolumes can be conformed for fusion of pre-registered
     image data
     """
-    def __init__(self, start, spacing, size, UID=None):
+    def __init__(self, start=None, spacing=None, size=None, UID=None):
         """Define a dicom frame of reference
 
         Args:
@@ -515,6 +515,13 @@ class BaseVolume:
                '  feature_label: {!s}\n'.format(self.feature_label) + \
                '  {!s}\n'.format(self.frameofreference)
 
+    @property
+    def nslices(self):
+        if len(self.frameofreference.size)>=3:
+            return self.frameofreference.size[-1]
+        else:
+            return 1
+
     # CONSTRUCTOR METHODS
     #  @staticmethod
     #  def _getAttrMap():
@@ -553,7 +560,7 @@ class BaseVolume:
 
 
     @classmethod
-    def fromArray(cls, array, frameofreference):
+    def fromArray(cls, array, frameofreference=None):
         """Constructor: from a numpy array and FrameOfReference object
 
         Args:
@@ -562,8 +569,12 @@ class BaseVolume:
         """
         # ensure array matches size in frameofreference
         self = cls()
-        self.array = array.reshape(frameofreference.size[::-1])
-        self.frameofreference = frameofreference
+        if frameofreference is not None:
+            self.array = array.reshape(frameofreference.size[::-1])
+            self.frameofreference = frameofreference
+        else:
+            self.array = array
+            self.frameofreference = FrameOfReference((0,0,0), (1,1,1), (*array.shape[::-1], 1))
 
         return self
 
@@ -808,6 +819,21 @@ class BaseVolume:
             self.modality = f.attrs['modality']
             self.feature_label = f.attrs['feature_label']
         return self
+
+    def toImage(self, fname):
+        if self.nslices > 1:
+            ext = os.path.splitext(fname)[1]
+            for i in range(self.nslices):
+                fname = fname.replace(ext, '_{:0.4d}.{}'.format(i, ext))
+                arr = self.array[i,:,:].reshape(self.frameofreference.size[0:2:-1])
+                arr = (arr-np.min(arr))/(np.max(arr)-np.min(arr)) * 255
+                im = Image.fromarray(arr).convert('L')
+                im.save(fname)
+        else:
+            arr = self.array[0,:,:].reshape(self.frameofreference.size[-2:-4:-1])
+            arr = (arr-np.min(arr))/(np.max(arr)-np.min(arr)) * 255
+            im = Image.fromarray(arr).convert('L')
+            im.save(fname)
 
 
     # PUBLIC METHODS

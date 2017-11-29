@@ -92,6 +92,7 @@ def elementwiseMin_gpu(feature_volume_list):
 ####################################################################################################
 def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwidth=None, dx=1, dy=0, dz=0, ndev=2,
                        cadd=(0,0,0), sadd=3, csub=(0,0,0), ssub=3, i=0,
+                       fixed_start=-250, fixed_end=350,
              feature_kernel='kernel_glcm', stat_name='stat_glcm_contrast'):
     """Uses PyCuda to parallelize the computation of the voxel-wise image entropy using a variable \
             neighborhood radius
@@ -141,15 +142,15 @@ def image_iterator_gpu(image_volume, roi=None, radius=2, gray_levels=None, binwi
         z_radius = radius
 
     # enforce quantization mode selection
-    # fixed_start, fixed_end = -150, 350
-    fixed_start, fixed_end = -250,350
     if gray_levels and binwidth:
         logger.exception('must exclusively specify "binwidth" or "gray_levels" to select glcm quantization mode')
     elif binwidth:
         quantize_mode = QMODE_FIXEDHU
         nbins = int(math.floor((fixed_end-fixed_start)/binwidth)) + 2
+        logger.debug('quantization using {} fixed bins from {} to {} with spacing {}'.format(nbins, fixed_start, fixed_end, binwidth))
         gray_levels = -1
     elif gray_levels:
+        warnings.warn('QMODE_STAT quantization mode will be deprecated soon in favor of other quantization methods.', DeprecationWarning)
         quantize_mode = QMODE_STAT
         nbins = gray_levels
         binwidth = -1
