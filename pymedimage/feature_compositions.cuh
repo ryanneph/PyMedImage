@@ -43,7 +43,7 @@ extern "C" {
             float min = 9999.f;
             for (int k=0; k<num_arrays; k++) {
                 long int true_idx = array_length * k + out_idx;
-                if (image_array[true_idx] > min) {
+                if (image_array[true_idx] < min) {
                     min = image_array[true_idx];
                 }
             }

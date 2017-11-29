@@ -2,6 +2,7 @@ import sys
 import os
 import time
 import logging
+import inspect
 import multiprocessing
 from pymedimage.notifications import pushNotification
 from abc import ABCMeta, abstractmethod
@@ -46,6 +47,10 @@ class MultiprocessManagerBase:
             error_count = 0
             # limit number of concurrent processes as there is only so much GPU memory available at one time
             # with 8 proc: max mem usage of ~4-4.5GB of 12.204GB total global mem
+            if self.notify: pushNotification(
+                "BEGIN - {}".format(self.title),
+                'called from: {}\n#jobs: {}'.format(sys.modules['__main__'].__file__, total_jobs)
+            )
             with multiprocessing.Pool(processes=self.processes) as p:
                 logger.info(str(self.title))
                 logger.info('-----------------------------------------------------------------------------------------')
