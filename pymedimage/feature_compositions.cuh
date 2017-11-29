@@ -22,7 +22,7 @@ extern "C" {
     {
         unsigned long int out_idx = blockIdx.x * blockDim.x + threadIdx.x;
         if (out_idx<(unsigned long int)array_length) {
-            float max = 0.0f;
+            float max = -9999.f;
             for (int k=0; k<num_arrays; k++) {
                 long int true_idx = array_length * k + out_idx;
                 if (image_array[true_idx] > max) {
