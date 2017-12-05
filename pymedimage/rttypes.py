@@ -870,7 +870,6 @@ class BaseVolume:
         img = nib.load(fname)
         h = img.header
         # TODO: add support for non-axially oriented slices (with affine view transformation)
-        print(h)
         data = np.transpose(img.get_data(), (2,1,0))
         frame = FrameOfReference((0,0,0), h.get_zooms(), h.get_data_shape())
         self = cls.fromArray(data, frame)
