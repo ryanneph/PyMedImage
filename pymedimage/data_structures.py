@@ -239,6 +239,7 @@ class LocalFeatureCompositionDefinition(WritableFeatureDefinition):
             new.featdefs.append(f.copy())
         return new
 
+
 class FeatureList(MutableSequence):
     """Defines basic functionality of a list with lookup methods for finding members by their member args"""
     def __init__(self, feature_def_list=None):
@@ -286,3 +287,8 @@ class FeatureList(MutableSequence):
 
     def insert(self, i, v):
         self.__storage.insert(i, v)
+
+
+class LocalFeatureCompositionCollection(FeatureList):
+    """defines a collection of composition types that can be calculated from the same set of elements"""
+    pass

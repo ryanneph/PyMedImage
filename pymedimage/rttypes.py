@@ -10,6 +10,7 @@ import warnings
 import math
 import numpy as np
 import dicom  # pydicom
+import nibabel as nib
 import pickle
 import scipy.io  # savemat -> save to .mat
 import h5py
@@ -504,7 +505,8 @@ class BaseVolume:
     def __init__(self):
         """Entrypoint to class, initializes members
         """
-        self.array = None
+        self.data = None
+        self.init_object = None
         self.frameofreference = None
         self.modality = None
         self.feature_label = None
@@ -521,6 +523,24 @@ class BaseVolume:
             return self.frameofreference.size[-1]
         else:
             return 1
+
+    @property
+    def data(self):
+        return self._data
+
+    @data.setter
+    def data(self, v):
+        self._data = v
+
+    @property
+    def array(self):
+        warnings.warn('use of BaseVolume.array property is deprecated. use BaseVolume.data instead')
+        return self.data
+
+    @array.setter
+    def array(self, v):
+        warnings.warn('use of BaseVolume.array property is deprecated. use BaseVolume.data instead')
+        self.data = v
 
     # CONSTRUCTOR METHODS
     #  @staticmethod
@@ -548,7 +568,7 @@ class BaseVolume:
 
     def _getDataDict(self):
         xstr = misc.xstr  # shorter call-name for use in function
-        return {'arraydata':     self.array,
+        return {'arraydata':     self.data,
                 'size':          self.frameofreference.size[::-1],
                 'start':         self.frameofreference.start[::-1],
                 'spacing':       self.frameofreference.spacing[::-1],
@@ -570,10 +590,10 @@ class BaseVolume:
         # ensure array matches size in frameofreference
         self = cls()
         if frameofreference is not None:
-            self.array = array.reshape(frameofreference.size[::-1])
+            self.data = array.reshape(frameofreference.size[::-1])
             self.frameofreference = frameofreference
         else:
-            self.array = array
+            self.data = array
             self.frameofreference = FrameOfReference((0,0,0), (1,1,1), (*array.shape[::-1], 1))
 
         return self
@@ -685,8 +705,8 @@ class BaseVolume:
             array_list.append(array)
 
         # stack arrays
-        self.array = np.concatenate(array_list, axis=0)
-        #  self.array = self.array.astype(int)
+        self.data = np.concatenate(array_list, axis=0)
+        #  self.data = self.data.astype(int)
         return self
 
     @classmethod
@@ -708,7 +728,7 @@ class BaseVolume:
         # import data to this object
         try:
             self = cls()
-            self.array = basevolumeserial.dataarray
+            self.data = basevolumeserial.dataarray
             self.frameofreference = FrameOfReference(basevolumeserial.startposition,
                                                      basevolumeserial.spacing,
                                                      basevolumeserial.size)
@@ -726,7 +746,7 @@ class BaseVolume:
         basevolumeserial.startposition = self.frameofreference.start
         basevolumeserial.spacing = self.frameofreference.spacing
         basevolumeserial.size = self.frameofreference.size
-        basevolumeserial.dataarray = self.array
+        basevolumeserial.dataarray = self.data
         basevolumeserial.modality = self.modality
         basevolumeserial.feature_label = self.feature_label
 
@@ -761,7 +781,7 @@ class BaseVolume:
 
         # construct new volume
         self = cls()
-        self.array = converted_data['arraydata']
+        self.data = converted_data['arraydata']
         self.frameofreference = FrameOfReference(converted_data['start'],
                                                  converted_data['spacing'],
                                                  converted_data['size'],
@@ -808,8 +828,8 @@ class BaseVolume:
         path = ensure_extension(path, '.h5')
         with h5py.File(path, 'r') as f:
             ad = f['arraydata']
-            self.array = np.empty(ad.shape)
-            ad.read_direct(self.array)
+            self.data = np.empty(ad.shape)
+            ad.read_direct(self.data)
             self.frameofreference = FrameOfReference(
                 tuple(f.attrs['start'])[::-1],
                 tuple(f.attrs['spacing'])[::-1],
@@ -825,15 +845,37 @@ class BaseVolume:
             ext = os.path.splitext(fname)[1]
             for i in range(self.nslices):
                 fname = fname.replace(ext, '_{:0.4d}.{}'.format(i, ext))
-                arr = self.array[i,:,:].reshape(self.frameofreference.size[0:2:-1])
+                arr = self.data[i,:,:].reshape(self.frameofreference.size[0:2:-1])
                 arr = (arr-np.min(arr))/(np.max(arr)-np.min(arr)) * 255
                 im = Image.fromarray(arr).convert('L')
                 im.save(fname)
         else:
-            arr = self.array[0,:,:].reshape(self.frameofreference.size[-2:-4:-1])
+            arr = self.data[0,:,:].reshape(self.frameofreference.size[-2:-4:-1])
             arr = (arr-np.min(arr))/(np.max(arr)-np.min(arr)) * 255
             im = Image.fromarray(arr).convert('L')
             im.save(fname)
+
+    def toNII(self, fname, affine=None):
+        if affine is None:
+            logger.warning('No information about global coordinate system provided')
+            affine = np.diag([1,1,1,1])
+
+        fname = ensure_extension(fname, '.nii')
+        img = nib.Nifti1Image(self.data, affine)
+        img.to_filename(fname)
+        return fname
+
+    @classmethod
+    def fromNII(cls, fname):
+        img = nib.load(fname)
+        h = img.header
+        # TODO: add support for non-axially oriented slices (with affine view transformation)
+        print(h)
+        data = np.transpose(img.get_data(), (2,1,0))
+        frame = FrameOfReference((0,0,0), h.get_zooms(), h.get_data_shape())
+        self = cls.fromArray(data, frame)
+        self.init_object = img
+        return self
 
 
     # PUBLIC METHODS
@@ -885,13 +927,13 @@ class BaseVolume:
     def _resample(self, new_voxelsize, order=3):
         if new_voxelsize == self.frameofreference.spacing:
             # no need to resample
-            return (self.array, self.frameofreference)
+            return (self.data, self.frameofreference)
 
         # voxelsize spec is in order (X,Y,Z) but array is kept in order (Z, Y, X)
         zoom_factors = np.true_divide(self.frameofreference.spacing, new_voxelsize)[::-1]
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            zoomarray = interpolation.zoom(self.array, zoom_factors, order=order, mode='nearest')
+            zoomarray = interpolation.zoom(self.data, zoom_factors, order=order, mode='nearest')
         zoomFOR = FrameOfReference(self.frameofreference.start, new_voxelsize, zoomarray.shape[::-1])
         return (zoomarray, zoomFOR)
 
@@ -928,17 +970,17 @@ class BaseVolume:
             if (idx < 0 or idx >= depth):
                 logger.exception('index out of bounds. must be between 0 -> {:d}'.format(depth-1))
                 raise IndexError
-            thisslice = self.array[idx, :, :]
+            thisslice = self.data[idx, :, :]
         elif (axis==1):
             if (idx < 0 or idx >= rows):
                 logger.exception('index out of bounds. must be between 0 -> {:d}'.format(rows-1))
                 raise IndexError
-            thisslice = self.array[:, idx, :]
+            thisslice = self.data[:, idx, :]
         elif (axis==2):
             if (idx < 0 or idx >= cols):
                 logger.exception('index out of bounds. must be between 0 -> {:d}'.format(cols-1))
                 raise IndexError
-            thisslice = self.array[:, :, idx]
+            thisslice = self.data[:, :, idx]
         else:
             logger.exception('invalid axis supplied. must be between 0 -> 2')
             raise ValueError
@@ -950,9 +992,9 @@ class BaseVolume:
         return thisslice
 
     def vectorize(self):
-        """flatten self.array in stacked-depth row-major order
+        """flatten self.data in stacked-depth row-major order
         """
-        return self.array.flatten(order='C').reshape((-1, 1))
+        return self.data.flatten(order='C').reshape((-1, 1))
 
     def get_val(self, z, y, x):
         """take xyz indices and return the value in array at that location
@@ -972,7 +1014,7 @@ class BaseVolume:
             logger.exception('z index ({:d}) out of bounds. must be between 0 -> {:d}'.format(z, depth-1))
             raise IndexError
 
-        return self.array[z, y, x]
+        return self.data[z, y, x]
 
     def set_val(self, z, y, x, value):
         """take xyz indices and value and reassing the value in array at that location
@@ -993,7 +1035,7 @@ class BaseVolume:
             raise IndexError
 
         # reassign value
-        self.array[z, y, x] = value
+        self.data[z, y, x] = value
 
 
 class MaskableVolume(BaseVolume):
@@ -1021,7 +1063,7 @@ class MaskableVolume(BaseVolume):
     def deepCopy(self):
         """makes deep copy of self and returns the copy"""
         copy_vol = MaskableVolume()
-        copy_vol.array = copy.deepcopy(self.array)
+        copy_vol.array = copy.deepcopy(self.data)
         copy_vol.frameofreference = copy.deepcopy(self.frameofreference)
         copy_vol.modality = self.modality
         copy_vol.feature_label = self.feature_label
@@ -1037,7 +1079,7 @@ class MaskableVolume(BaseVolume):
             MaskableVolume
         """
         # copy attributes
-        self.array = base.array
+        self.data = base.array
         self.frameofreference = copy.deepcopy(base.frameofreference)
         self.modality = base.modality
         self.feature_label = base.feature_label
@@ -1070,12 +1112,12 @@ class MaskableVolume(BaseVolume):
         return slicearray
 
     def vectorize(self, roi=None):
-        """flatten self.array in stacked-depth row-major order
+        """flatten self.data in stacked-depth row-major order
 
         Args:
             roi  -- ROI object that can be supplied to mask the output of getSlice
         """
-        array = self.array.flatten(order='C').reshape((-1, 1))
+        array = self.data.flatten(order='C').reshape((-1, 1))
 
         # get equivalent array from densemaskarray
         if (roi is not None):

@@ -27,8 +27,6 @@ def loadPrecalculated(doi, local_feature_def):
     if os.path.exists(p_doi_features):
         matches = local_feature_def.findFiles(p_doi_features)
         if matches and len(matches)>0:
-            # print(', '.join(matches))
-            # return None ##QUICKFIX - corrupt pickle file errors on nextline with HYPOFRAC dataset
             return doi.loadFeatureVolume(matches[0])
     return None
 
@@ -107,6 +105,7 @@ def calculateCompositeFeature(doi, composite_feature_def, saveintermediate=False
             else: loaded_composite_vol = None
             return (10, loaded_composite_vol)
 
+    # need to calculate
     vol_list = []
     for lfeatdef in composite_feature_def.featdefs:
         # lfeatdef.recalculate = True  # force recalculation
