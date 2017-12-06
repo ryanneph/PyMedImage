@@ -17,6 +17,10 @@ def ensure_extension(fname, ext):
     # guarantee only one instance of extension
     return fname.rstrip(os.path.splitext(fname)[1]) + ext
 
+def append_before_extension(fname, appendstr):
+    base, ext = os.path.splitext(fname)
+    return base + str(appendstr) + ext
+
 def xstr(s):
     """replace None with '' (empty string)"""
     return '' if s is None else str(s)
