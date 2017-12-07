@@ -7,7 +7,7 @@ https://www.datacamp.com/community/tutorials/matplotlib-3d-volumetric-data#gs.v0
 import numpy as np
 import matplotlib.pyplot as plt
 
-def multi_slice_viewer(volume,_slice = None, cmap='Viridis'):
+def multi_slice_viewer(volume,_slice = None, cmap='viridis'):
 
     remove_keymap_conflicts({'j', 'k'})
     fig, ax = plt.subplots()
