@@ -7,7 +7,7 @@ https://www.datacamp.com/community/tutorials/matplotlib-3d-volumetric-data#gs.v0
 import numpy as np
 import matplotlib.pyplot as plt
 
-def multi_slice_viewer(volume,_slice = None):
+def multi_slice_viewer(volume,_slice = None, cmap='Viridis'):
 
     remove_keymap_conflicts({'j', 'k'})
     fig, ax = plt.subplots()
@@ -21,7 +21,7 @@ def multi_slice_viewer(volume,_slice = None):
     else:
         ax.index = volume.shape[0] // 2
     ax.set_xlabel("Slice %s of %s"%(str(ax.index+1),volume.shape[0]))
-    ax.imshow(volume[ax.index])
+    ax.imshow(volume[ax.index], cmap=cmap)
     fig.canvas.mpl_connect('key_press_event', process_key)
     fig.canvas.mpl_connect('scroll_event', process_scroll)
     plt.show()
@@ -29,9 +29,9 @@ def multi_slice_viewer(volume,_slice = None):
 def process_key(event):
     fig = event.canvas.figure
     ax = fig.axes[0]
-    if event.key == 'j':
+    if event.key in ['down', 'left', 'j']:
         previous_slice(ax)
-    elif event.key == 'k':
+    elif event.key in ['up', 'right', 'k']:
         next_slice(ax)
     fig.canvas.draw()
 
