@@ -542,6 +542,10 @@ class BaseVolume:
         warnings.warn('use of BaseVolume.array property is deprecated. use BaseVolume.data instead')
         self.data = v
 
+    def astype(self, type):
+        self.data = self.data.astype(type)
+        return self
+
     # CONSTRUCTOR METHODS
     #  @staticmethod
     #  def _getAttrMap():
@@ -923,27 +927,33 @@ class BaseVolume:
         resampled_volume.feature_label = self.feature_label
         return resampled_volume
 
-    def _resample(self, new_voxelsize, order=3):
-        if new_voxelsize == self.frameofreference.spacing:
-            # no need to resample
-            return (self.data, self.frameofreference)
+    def _resample(self, new_voxelsize=None, mode='nearest', order=3, zoom_factors=None):
+        if zoom_factors is None and new_voxelsize is None: raise RuntimeError('must set either factor or new_voxelsize')
+        if zoom_factors is not None and not isinstance(zoom_factors, list) and not isinstance(zoom_factors, tuple):
+                zoom_factors = tuple([zoom_factors]*self.data.ndim)
 
-        # voxelsize spec is in order (X,Y,Z) but array is kept in order (Z, Y, X)
-        zoom_factors = np.true_divide(self.frameofreference.spacing, new_voxelsize)[::-1]
+        if new_voxelsize is not None and zoom_factors is None:
+            if new_voxelsize == self.frameofreference.spacing:
+                # no need to resample
+                return (self.data, self.frameofreference)
+            # voxelsize spec is in order (X,Y,Z) but array is kept in order (Z, Y, X)
+            zoom_factors = np.true_divide(self.frameofreference.spacing, new_voxelsize)
+
+        logger.debug('resizing volume with factors (xyz): {!s}'.format(zoom_factors))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            zoomarray = interpolation.zoom(self.data, zoom_factors, order=order, mode='nearest')
+            zoomarray = interpolation.zoom(self.data, zoom_factors[::-1], order=order, mode=mode)
         zoomFOR = FrameOfReference(self.frameofreference.start, new_voxelsize, zoomarray.shape[::-1])
         return (zoomarray, zoomFOR)
 
-    def resample(self, new_voxelsize, order=3):
+    def resample(self, *args, **kwargs):
         """resamples volume to new voxelsize
 
         Args:
             new_voxelsize: 3 tuple of voxel size in mm in the order (X, Y, Z)
 
         """
-        zoomarray, zoomFOR = self._resample(new_voxelsize, order)
+        zoomarray, zoomFOR = self._resample(*args, **kwargs)
         new_vol = MaskableVolume.fromArray(zoomarray, zoomFOR)
         new_vol.modality = self.modality
         new_vol.feature_label = self.feature_label
