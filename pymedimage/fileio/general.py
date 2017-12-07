@@ -19,6 +19,7 @@ def loadImageSet(dname, mask_types=None, multichannel=False, exts=None, type_ord
     logger.debug('loading images in "{}"'.format(dname))
     fnames = [os.path.join(dname, f) for f in os.listdir(dname) if isFileByExt(f, exts)]
 
+
     if isinstance(resize_factor, Number):
         max_resize = 4
         if not (0<resize_factor<=max_resize):
@@ -93,9 +94,9 @@ def loadImageSet(dname, mask_types=None, multichannel=False, exts=None, type_ord
         logger.debug('loaded {} images (shape={})'.format(len(images), images[0].shape))
 
     if mask is not None:
-        return (images, mask)
+        return (im, mask)
     else:
-        return images
+        return im
 
 def loadImageCollection(root, recursive=True, **kwargs):
     """load a collection of images, each contained in their own directory and loaded as a multichannel image
@@ -105,7 +106,7 @@ def loadImageCollection(root, recursive=True, **kwargs):
     for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
         for f in filenames:
             if isFileByExt(f, kwargs['exts']):
-                doi_paths.append(os.path.join(root, dirpath))
+                doi_paths.append(dirpath)
                 break
         if not recursive: break
 
