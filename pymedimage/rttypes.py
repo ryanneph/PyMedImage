@@ -19,8 +19,9 @@ import copy
 import warnings
 from PIL import Image, ImageDraw
 from scipy.ndimage import interpolation
-from pymedimage import dcmio, misc
-from pymedimage.misc import ensure_extension
+from . import dcmio, misc
+from .misc import ensure_extension
+from .fileio.strutils import getFileType
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -502,7 +503,7 @@ class ROI:
 class BaseVolume:
     """Defines basic storage for volumetric voxel intensities within a dicom FrameOfReference
     """
-    def __init__(self):
+    def __init__(self, fname=None):
         """Entrypoint to class, initializes members
         """
         self.data = None
@@ -510,6 +511,8 @@ class BaseVolume:
         self.frameofreference = None
         self.modality = None
         self.feature_label = None
+        if fname is not None:
+            self.load(fname)
 
     def __repr__(self):
         return '{!s}:\n'.format(self.__class__) + \
@@ -582,6 +585,16 @@ class BaseVolume:
                 'order':         'ZYX'
                 }
 
+    @classmethod
+    def load(cls, fname, frameofreference=None):
+        constructorByType = {'.nii':    cls.fromNII,
+                             '.nii.gz': cls.fromNII,
+                             '.dcm':    cls.fromDir,
+                             '.mat':    cls.fromMatlab,
+                             '.pickle': cls.fromPickle,
+                             '.raw':    cls.fromBinary,
+                             '.h5':     cls.fromHDF5}
+        return constructorByType[getFileType(fname)](fname)
 
     @classmethod
     def fromArray(cls, array, frameofreference=None):
@@ -1050,10 +1063,10 @@ class BaseVolume:
 class MaskableVolume(BaseVolume):
     """Subclass of BaseVolume that adds support for ROI masking of the data array
     """
-    def __init__(self):
+    def __init__(self, fname=None):
         """Entry point to class"""
         # call to base class initializer
-        super().__init__()
+        BaseVolume.__init__(self, fname)
 
     def conformTo(self, frameofreference):
         """Resamples the current MaskableVolume to the supplied FrameOfReference and returns a new Volume

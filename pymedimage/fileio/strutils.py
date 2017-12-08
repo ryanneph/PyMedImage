@@ -13,6 +13,11 @@ def sanitize(string, dirty_chars=['.']):
         string = string.replace(c, '\{}'.format(c))
     return string
 
+def getFileType(fname):
+    m = re.search(r'\.[a-zA-Z0-9]*\.?[a-zA-Z0-9]*$', fname)
+    if m is not None: return m.group(0)
+    else: return None
+
 def isFileByExt(fname, exts=None):
     if not exts: return True
     if isinstance(exts, str): exts=[exts]

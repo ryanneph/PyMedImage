@@ -30,7 +30,7 @@ def loadImageSet(dname, mask_types=None, multichannel=False, exts=None, type_ord
     if resize_factor is not None and not isinstance(resize_factor, list): resize_factor = list(resize_factor)
 
     def loadvol(fname, mask=None, resample_order=3):
-        vol = MaskableVolume.fromNII(fname)
+        vol = MaskableVolume.load(fname)
         if isinstance(resize_factor, list):
             vol = vol.resample(zoom_factors=resize_factor, order=resample_order)
         #  view3d(vol.data, cmap='gray')
