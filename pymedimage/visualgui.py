@@ -6,8 +6,11 @@ https://www.datacamp.com/community/tutorials/matplotlib-3d-volumetric-data#gs.v0
 # TODO: Add orientation selection and automatic interpolation
 import numpy as np
 import matplotlib.pyplot as plt
+from .rttypes import BaseVolume
 
 def multi_slice_viewer(volume,_slice = None, cmap='viridis'):
+    if isinstance(volume, BaseVolume):
+        volume = volume.data
 
     remove_keymap_conflicts({'j', 'k'})
     fig, ax = plt.subplots()
