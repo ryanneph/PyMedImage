@@ -21,7 +21,7 @@ from PIL import Image, ImageDraw
 from scipy.ndimage import interpolation
 from . import dcmio, misc
 from .misc import ensure_extension
-from .fileio.strutils import getFileType
+from .fileio.strutils import getFileType, isFileByExt
 
 # initialize module logger
 logger = logging.getLogger(__name__)
@@ -586,15 +586,33 @@ class BaseVolume:
                 }
 
     @classmethod
-    def load(cls, fname, frameofreference=None):
-        constructorByType = {'.nii':    cls.fromNII,
-                             '.nii.gz': cls.fromNII,
-                             '.dcm':    cls.fromDir,
-                             '.mat':    cls.fromMatlab,
-                             '.pickle': cls.fromPickle,
-                             '.raw':    cls.fromBinary,
-                             '.h5':     cls.fromHDF5}
-        return constructorByType[getFileType(fname)](fname)
+    def load(cls, fname, frameofreference=None, recursive=False):
+        if os.path.isfile(fname):
+            constructorByType = {'.nii':    cls.fromNII,
+                                 '.nii.gz': cls.fromNII,
+                                 '.dcm':    cls.fromDicom,
+                                 '.mat':    cls.fromMatlab,
+                                 '.pickle': cls.fromPickle,
+                                 '.raw':    cls.fromBinary,
+                                 '.h5':     cls.fromHDF5}
+            return constructorByType[getFileType(fname)](fname)
+        elif os.path.isdir(fname):
+            print('loading from dir')
+            vols = []
+            # collect all full paths to dirs containing medical image files
+            for dirpath, dirnames, filenames in os.walk(fname, followlinks=True):
+                print(dirpath)
+                for f in filenames:
+                    if isFileByExt(f, '.dcm'):
+                        try:
+                            vols.append(cls.fromDir(dirpath))
+                            break
+                        except Exception as e:
+                            logger.warning('failed to open dicom directory: "{}"\n{}'.format(dirpath, e))
+                if not recursive: break
+            if len(vols) > 1: return vols
+            elif len(vols)==1: return vols[0]
+            else: raise RuntimeError()
 
     @classmethod
     def fromArray(cls, array, frameofreference=None):
@@ -662,6 +680,9 @@ class BaseVolume:
         #  vol[vol<-1e10] = 0
         return cls.fromArray(vol, frameofreference)
 
+    @classmethod
+    def fromDicom(cls, fname):
+        return cls.fromDatasetList([dcmio.read_dicom(fname)])
 
     @classmethod
     def fromDatasetList(cls, dataset_list):
