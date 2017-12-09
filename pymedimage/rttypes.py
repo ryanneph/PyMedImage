@@ -503,7 +503,7 @@ class ROI:
 class BaseVolume:
     """Defines basic storage for volumetric voxel intensities within a dicom FrameOfReference
     """
-    def __init__(self, fname=None):
+    def __init__(self):
         """Entrypoint to class, initializes members
         """
         self.data = None
@@ -511,8 +511,6 @@ class BaseVolume:
         self.frameofreference = None
         self.modality = None
         self.feature_label = None
-        if fname is not None:
-            self.load(fname)
 
     def __repr__(self):
         return '{!s}:\n'.format(self.__class__) + \
@@ -812,8 +810,6 @@ class BaseVolume:
             'for_uid': extract_str(data['for_uid']),
             'modality': extract_str(data['modality']),
             'feature_label': extract_str(data['feature_label']),
-            'scale': data['scale'].item(),
-            'offset': data['offset'].item(),
             'order': extract_str(data['order'])
         }
 
@@ -1084,10 +1080,10 @@ class BaseVolume:
 class MaskableVolume(BaseVolume):
     """Subclass of BaseVolume that adds support for ROI masking of the data array
     """
-    def __init__(self, fname=None):
+    def __init__(self):
         """Entry point to class"""
         # call to base class initializer
-        BaseVolume.__init__(self, fname)
+        BaseVolume.__init__(self)
 
     def conformTo(self, frameofreference):
         """Resamples the current MaskableVolume to the supplied FrameOfReference and returns a new Volume
