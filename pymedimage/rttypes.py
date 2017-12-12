@@ -682,6 +682,25 @@ class BaseVolume:
     def fromDicom(cls, fname):
         return cls.fromDatasetList([dcmio.read_dicom(fname)])
 
+    def toDicom(self, dname, fprefix=''):
+        for i in range(self.frameofreference.size[2]):
+            ds = dcmio.make_dicom_boilerplate()
+            ds.SliceThickness = self.frameofreference.spacing[2]
+            ds.PixelSpacing = list(self.frameofreference.spacing[:2])
+            ds.SliceLocation = self.frameofreference.start[2] + i*self.frameofreference.spacing[2]
+            ds.ImagePositionPatient = [*self.frameofreference.start[:2], ds.SliceLocation]
+            ds.Columns = self.frameofreference.size[0]
+            ds.Rows = self.frameofreference.size[1]
+            ds.AcquisitionNumber = i+1
+            ds.Modality = self.modality if self.modality is not None else ''
+            ds.DerivationDescription = self.feature_label if self.feature_label is not None else ''
+            ds.PixelData = (self.data[i, :, :].flatten().astype(np.uint16)+1000).tostring()
+            ds.RescaleSlope = 1.0
+            ds.RescaleIntercept = -1000.0
+            ds.PixelRepresentation = 0 # unsigned integers
+            os.makedirs(dname, exist_ok=True)
+            ds.save_as(os.path.join(dname, '{}{:04d}.dcm'.format(fprefix, i)))
+
     @classmethod
     def fromDatasetList(cls, dataset_list):
         """constructor: takes a list of dicom slice datasets and builds a BaseVolume array
@@ -864,6 +883,7 @@ class BaseVolume:
             ad = f['arraydata']
             self.data = np.empty(ad.shape)
             ad.read_direct(self.data)
+            self.data = np.array(self.data)
             self.frameofreference = FrameOfReference(
                 tuple(f.attrs['start'])[::-1],
                 tuple(f.attrs['spacing'])[::-1],

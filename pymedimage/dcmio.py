@@ -9,17 +9,76 @@ import os
 import sys
 import logging
 import warnings
+from datetime import datetime
 import dicom
+import dicom.dataset
 from string import Template
-from pymedimage.misc import indent, g_indents
+from .misc import indent, g_indents, ensure_extension
 
 # initialize module logger
 logger = logging.getLogger(__name__)
 
+def make_dicom_boilerplate():
+    # Populate required values for file meta information
+    file_meta = dicom.dataset.Dataset()
+    file_meta.MediaStorageSOPClassUID = dicom.UID.generate_uid()
+    file_meta.MediaStorageSOPInstanceUID = dicom.UID.generate_uid()
+    file_meta.ImplementationClassUID = dicom.UID.generate_uid()
+    ds = dicom.dataset.Dataset()
+    ds.preamble = b"\0" * 128
+    ds.file_meta = file_meta
+    ds.is_little_endian = True
+    ds.is_implicit_VR = True
+
+    datestr = datetime.now().strftime('%Y%m%d')
+    timestr = datetime.now().strftime('%H%M%S')
+    ds.ContentDate = datestr
+    ds.ContentTime = timestr
+    ds.StudyDate = datestr
+    ds.StudyTime = timestr
+    ds.PatientID = 'ANON0001'
+    ds.StudyID = 'ANON0001'
+    ds.SeriesNumber = '0001'
+    ds.StudyDate = datestr
+    ds.StudyTime = timestr
+    ds.AccessionNumber = ''
+    ds.ReferringPhysiciansName = ''
+    ds.PatientName = 'ANON0001'
+    ds.PatientSex = ''
+    ds.PatientAge = ''
+    ds.PatientBirthDate = ''
+    ds.PatientOrientation = 'LA'
+    ds.PatientPosition = 'HFS'
+    ds.ImagePositionPatient = [0, 0, 0]
+    ds.ImageOrientationPatient = [1, 0, 0, 0, 1, 0]
+    ds.InstanceNumber = 1
+    ds.StudyInstanceUID = dicom.UID.generate_uid()
+    ds.SeriesInstanceUID = dicom.UID.generate_uid()
+    ds.FrameOfReferenceUID = dicom.UID.generate_uid()
+    ds.ImageType = ['DERIVED', 'PRIMARY', 'AXIAL']
+    ds.Modality = ''
+    ds.SamplesPerPixel = 1
+    ds.PhotometricInterpretation = 'MONOCHROME2'
+    ds.BitsAllocated = 16
+    ds.BitsStored = 16
+    ds.HighBit = 15
+    ds.RescaleIntercept = 0
+    ds.RescaleSlope = 1.0
+    ds.KVP = ''
+    ds.AcquisitionNumber = 1
+    ds.PixelRepresentation = 0
+    ds.SliceLocation = 0.0
+    ds.Rows = 0
+    ds.Columns = 0
+    ds.PixelSpacing = [1.0, 1.0]
+    ds.SliceThickness = 1.0
+    ds.Units = 'HU'
+    ds.RescaleType = 'HU'
+    return ds
+
 def write_dicom(path, dataset):
     """write a pydicom dataset to dicom file"""
-    if not os.path.splitext(path)[1] == '.dcm':
-        path += '.dcm'
+    ensure_extension(path, '.dcm')
     dicom.write_file(path, dataset)
 
 def read_dicom(path):

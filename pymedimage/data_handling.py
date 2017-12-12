@@ -2,13 +2,14 @@ import os
 import logging
 from sklearn.decomposition import PCA as sklearnPCA
 import numpy as np
+import numpy.ma as ma
 from pymedimage.misc import indent, g_indents, generate_heatmap_label
-from pymedimage.rttypes import MaskableVolume
+from pymedimage import rttypes
 
 # initialize module logger
 logger = logging.getLogger(__name__)
 
-def create_pruned_vector(volume, roi):
+def create_pruned_vector(volume, roi=None):
     """takes a BaseVolume and creates a vector of intensities where all masked voxels are excluded
 
     Args:
@@ -18,30 +19,33 @@ def create_pruned_vector(volume, roi):
     Returns:
         numpy 1Darray (vector) where voxel intensities are only included where roi mask is not 0
     """
-    logger.debug('pre-pruning voxel count: {!s}'.format(np.prod(volume.frameofreference.size)))
-    # no roi defined
-    if (not roi):
-        pruned_vector = volume.vectorize()
+    logger.debug('pre-pruning voxel count: {!s}'.format(np.prod(volume.data.shape)))
+    if isinstance(volume, rttypes.BaseVolume):
+        volume = volume.data
+        frame = volume.frameofreference
+        (size_x, size_y, size_z) = volume.frameofreference.size
+    elif isinstance(volume, np.ndarray):
+        (size_x, size_y, size_z) = volume.shape[::-1]
+    else: raise TypeError('volume must be one of [BaseVolume, np.ndarray]')
 
+    # no roi defined
+    if roi is None:
+        pruned_vector = volume.data[volume.data!=0].flatten()
     else:
         # roi defined - actually need to prune based on roi densemask
-        (size_x, size_y, size_z) = volume.frameofreference.size
-        densemaskvolume = roi.makeDenseMask(volume.frameofreference)
-        pruned_vector = []
-        for d in range(size_z):
-            for r in range(size_y):
-                for c in range(size_x):
-                    if (densemaskvolume.array[d, r, c] == 1):
-                        pruned_vector.append(volume.array[d, r, c])
+        if isinstance(roi, rttypes.ROI):
+            densemaskvolume = roi.makeDenseMask(frame).data
+        else:
+            (size_x, size_y, size_z) = volume.shape[::-1]
+            densemaskvolume = np.array(roi)
 
-        # convert to np.array/vector
-        pruned_vector = np.array(pruned_vector)
+        pruned_vector = volume[np.nonzero(densemaskvolume)]
 
     # convert array to a vector with dims (N, 1) so concatenation can be performed
     logger.debug('post-pruning voxel count: {!s}'.format(pruned_vector.shape[0]))
-    return pruned_vector.reshape((-1, 1))
+    return np.atleast_1d(pruned_vector)
 
-def expand_pruned_vector(pruned_vector, roi, frameofreference, fill_value=-1):
+def expand_pruned_vector(pruned_vector, roi=None, frameofreference=None, fill_value=-1):
     """takes a sparse vector of voxel intensities and expands into a dense MaskableVolume, filling masked
     voxel locations with fill_value
     performs opposite function of create_pruned_vector
@@ -57,29 +61,43 @@ def expand_pruned_vector(pruned_vector, roi, frameofreference, fill_value=-1):
     """
     logger.debug('pre-expansion voxel count: {!s}'.format(pruned_vector.shape[0]))
     # no roi defined
-    if (not roi):
-        return MaskableVolume().fromArray(pruned_vector, frameofreference)
+    if roi is None:
+        return rttypes.MaskableVolume.fromArray(pruned_vector, frameofreference)
 
     # roi defined - actually need to expand based on roi densemask
-    (size_x, size_y, size_z) = frameofreference.size
-    densemaskvolume = roi.makeDenseMask(frameofreference)
-    expanded_vector = []
-    pruned_idx = 0
-    for d in range(size_z):
-        for r in range(size_y):
-            for c in range(size_x):
-                if (densemaskvolume.array[d, r, c] == 1):
-                    expanded_vector.append(pruned_vector[pruned_idx])
-                    pruned_idx += 1
-                else:
-                    expanded_vector.append(fill_value)
+    if isinstance(roi, rttypes.ROI):
+        if frameofreference is not None:
+            (size_x, size_y, size_z) = frameofreference.size
+            densemaskvolume = roi.makeDenseMask(frameofreference)
+        else:
+            densemaskvolume = roi.makeDenseMask()
+            (size_x, size_y, size_z) = densemaskvolume.shape[::-1]
 
-    # convert to np.array/vector
-    expanded_vector = np.array(expanded_vector)
+    else:
+        (size_x, size_y, size_z) = roi.shape[::-1]
+        densemaskvolume = np.array(roi)
+    expanded_vector = fill_value*np.ones((size_z, size_y, size_x))
+    expanded_vector[roi!=0] = pruned_vector
+    #  densemaskvolume = roi.makeDenseMask(frameofreference)
+    #  expanded_vector = []
+    #  pruned_idx = 0
+    #  for d in range(size_z):
+    #      for r in range(size_y):
+    #          for c in range(size_x):
+    #              if (densemaskvolume.array[d, r, c] == 1):
+    #                  expanded_vector.append(pruned_vector[pruned_idx])
+    #                  pruned_idx += 1
+    #              else:
+    #                  expanded_vector.append(fill_value)
+
+    #  # convert to np.array/vector
+    #  expanded_vector = np.array(expanded_vector)
     logger.debug('post-expansion voxel count: {!s}'.format(expanded_vector.shape[0]))
 
     # convert to MaskableVolume
-    return MaskableVolume().fromArray(expanded_vector, frameofreference)
+    if frameofreference is not None:
+        return rttypes.MaskableVolume.fromArray(expanded_vector, frameofreference)
+    else: return expanded_vector
 
 
 def create_feature_matrix(feature_volumes, roi=None, PCA=False, PCA_components=0.95):

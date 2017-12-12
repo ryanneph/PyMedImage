@@ -11,6 +11,7 @@ from .rttypes import BaseVolume
 def multi_slice_viewer(volume,_slice = None, cmap='viridis'):
     if isinstance(volume, BaseVolume):
         volume = volume.data
+    if volume.ndim < 3: volume = np.expand_dims(volume, axis=0)
 
     remove_keymap_conflicts({'j', 'k'})
     fig, ax = plt.subplots()
