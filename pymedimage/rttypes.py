@@ -683,8 +683,11 @@ class BaseVolume:
         return cls.fromDatasetList([dcmio.read_dicom(fname)])
 
     def toDicom(self, dname, fprefix=''):
+        SeriesInstanceUID   = dicom.UID.generate_uid()
+        StudyInstanceUID    = dicom.UID.generate_uid()
+        FrameOfReferenceUID = dicom.UID.generate_uid()
         for i in range(self.frameofreference.size[2]):
-            ds = dcmio.make_dicom_boilerplate()
+            ds = dcmio.make_dicom_boilerplate(SeriesInstanceUID, StudyInstanceUID, FrameOfReferenceUID)
             ds.SliceThickness = self.frameofreference.spacing[2]
             ds.PixelSpacing = list(self.frameofreference.spacing[:2])
             ds.SliceLocation = self.frameofreference.start[2] + i*self.frameofreference.spacing[2]

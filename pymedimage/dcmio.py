@@ -18,10 +18,14 @@ from .misc import indent, g_indents, ensure_extension
 # initialize module logger
 logger = logging.getLogger(__name__)
 
-def make_dicom_boilerplate():
+RTIMAGE_SOP_CLASS_UID = "1.2.840.10008.5.1.4.1.1.481.1"
+CTIMAGE_SOP_CLASS_UID = "1.2.840.10008.5.1.4.1.1.2"
+MRIMAGE_SOP_CLASS_UID = "1.2.840.10008.5.1.4.1.1.4"
+
+def make_dicom_boilerplate(SeriesInstanceUID=None, StudyInstanceUID=None, FrameOfReferenceUID=None):
     # Populate required values for file meta information
     file_meta = dicom.dataset.Dataset()
-    file_meta.MediaStorageSOPClassUID = dicom.UID.generate_uid()
+    file_meta.MediaStorageSOPClassUID = CTIMAGE_SOP_CLASS_UID
     file_meta.MediaStorageSOPInstanceUID = dicom.UID.generate_uid()
     file_meta.ImplementationClassUID = dicom.UID.generate_uid()
     ds = dicom.dataset.Dataset()
@@ -52,11 +56,13 @@ def make_dicom_boilerplate():
     ds.ImagePositionPatient = [0, 0, 0]
     ds.ImageOrientationPatient = [1, 0, 0, 0, 1, 0]
     ds.InstanceNumber = 1
-    ds.StudyInstanceUID = dicom.UID.generate_uid()
-    ds.SeriesInstanceUID = dicom.UID.generate_uid()
-    ds.FrameOfReferenceUID = dicom.UID.generate_uid()
+    ds.StudyInstanceUID = dicom.UID.generate_uid() if StudyInstanceUID is None else StudyInstanceUID
+    ds.SeriesInstanceUID = dicom.UID.generate_uid() if SeriesInstanceUID is None else SeriesInstanceUID
+    ds.FrameOfReferenceUID = dicom.UID.generate_uid() if FrameOfReferenceUID is None else FrameOfReferenceUID
+    ds.SOPInstanceUID = dicom.UID.generate_uid()
     ds.ImageType = ['DERIVED', 'PRIMARY', 'AXIAL']
     ds.Modality = ''
+    ds.SOPClassUID = CTIMAGE_SOP_CLASS_UID
     ds.SamplesPerPixel = 1
     ds.PhotometricInterpretation = 'MONOCHROME2'
     ds.BitsAllocated = 16
