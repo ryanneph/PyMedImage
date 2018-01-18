@@ -875,13 +875,23 @@ class BaseVolume:
             f.create_dataset('arraydata', data=arraydata)
             f.attrs['fileversion'] = '1.0'
 
-    @classmethod
-    def fromHDF5(cls, path):
-        """restore objects from hdf5 file with image data stored as dataset and metadata as attributes"""
+    def _fromDoseH5(self, path):
+        """load from dosecalc defined h5 file"""
+        with h5py.File(path, 'r') as f:
+            ad = f['dose']
+            self.data = np.empty(ad.shape)
+            ad.read_direct(self.data)
+            self.data = np.array(self.data)
+            self.frameofreference = FrameOfReference(
+                tuple(ad.attrs['dicom_start_cm'])[::-1],
+                tuple(ad.attrs['voxel_size_cm'])[::-1],
+                tuple(ad.shape)[::-1]
+            )
+        return self
+
+    def _fromH5(self, path):
+        """load from pymedimage defined h5 file"""
         extract_str = misc.numpy_safe_string_from_array
-        # construct new volume
-        self = cls()
-        path = ensure_extension(path, '.h5')
         with h5py.File(path, 'r') as f:
             ad = f['arraydata']
             self.data = np.empty(ad.shape)
@@ -895,6 +905,23 @@ class BaseVolume:
             )
             self.modality = f.attrs['modality']
             self.feature_label = f.attrs['feature_label']
+
+    @classmethod
+    def fromHDF5(cls, path):
+        """restore objects from hdf5 file with image data stored as dataset and metadata as attributes"""
+        # construct new volume
+        self = cls()
+        path = ensure_extension(path, '.h5')
+        loaded = False
+        except_msgs = []
+        for meth in [self._fromDoseH5, self._fromH5]:
+            try:
+                meth(path)
+                loaded = True
+                break
+            except Exception as e: except_msgs.append(str(e))
+        if not loaded:
+            raise RuntimeError('failed to load "{!s}"\n{!s}'.format(path, '\n'.join(except_msgs)))
         return self
 
     def toImage(self, fname):
