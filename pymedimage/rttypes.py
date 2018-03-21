@@ -8,6 +8,7 @@ import os
 import logging
 import warnings
 import math
+from math import ceil, floor
 import numpy as np
 import dicom  # pydicom
 import nibabel as nib
@@ -49,6 +50,14 @@ class FrameOfReference:
         self.spacing = spacing
         self.size = size
         self.UID = UID
+
+    def copy(self):
+        new = FrameOfReference()
+        new.start = copy.deepcopy(self.start)
+        new.size = copy.deepcopy(self.size)
+        new.spacing = copy.deepcopy(self.spacing)
+        new.UID = copy.deepcopy(self.UID)
+        return new
 
     def __repr__(self):
         return '{!s}:\n'.format(self.__class__) + \
@@ -182,7 +191,7 @@ class ROI:
             self.frameofreference = self.getROIExtents()
 
     @classmethod
-    def collectionFromFile(cls, rtstruct_path):
+    def collectionFromFile(cls, rtstruct_path, keep_empty=False):
         """loads an rtstruct specified by path and returns a dict of ROI objects
 
         Args:
@@ -218,10 +227,11 @@ class ROI:
                 roi_dict[structuresetroi.ROIName] = (cls(roicontour=ROIContour_dict[ROINumber],
                                                          structuresetroi=structuresetroi))
             # prune empty ROIs from dict
-            for roiname, roi in dict(roi_dict).items():
-                if (roi.coordslices is None or len(roi.coordslices) <= 0):
-                    logger.debug('pruning empty ROI: {:s} from loaded ROIs'.format(roiname))
-                    del roi_dict[roiname]
+            if not keep_empty:
+                for roiname, roi in dict(roi_dict).items():
+                    if (roi.coordslices is None or len(roi.coordslices) <= 0):
+                        logger.debug('pruning empty ROI: {:s} from loaded ROIs'.format(roiname))
+                        del roi_dict[roiname]
 
             logger.debug('loaded {:d} ROIs succesfully'.format(len(roi_dict)))
             return roi_dict
@@ -273,7 +283,7 @@ class ROI:
         minerror = 5000
         coordslice = None
         ### REVISIT THE CORRECT SETTING OF TOLERANCE TODO
-        tolerance = self.frameofreference.spacing[2]*1.5 - 1e-9  # if upsampling too much then throw error
+        tolerance = self.frameofreference.spacing[2]*0.95 - 1e-9  # if upsampling too much then throw error
         for slice in self.coordslices:
             # for each list of coordinate tuples - check the slice for distance from position
             error = abs(position - slice[0][2])
@@ -426,9 +436,9 @@ class ROI:
         start = (global_limits['xmin'],
                  global_limits['ymin'],
                  global_limits['zmin'] )
-        size = (int((global_limits['xmax'] - global_limits['xmin']) / spacing[0]),
-                int((global_limits['ymax'] - global_limits['ymin']) / spacing[1]),
-                int((global_limits['zmax'] - global_limits['zmin']) / spacing[2]) )
+        size = (int(ceil((global_limits['xmax'] - global_limits['xmin']) / spacing[0])),
+                int(ceil((global_limits['ymax'] - global_limits['ymin']) / spacing[1])),
+                int(ceil((global_limits['zmax'] - global_limits['zmin']) / spacing[2])) )
 
         logger.debug('ROIExtents:\n'
                      '    start:   {:s}\n'
@@ -589,6 +599,7 @@ class BaseVolume:
             constructorByType = {'.nii':    cls.fromNII,
                                  '.nii.gz': cls.fromNII,
                                  '.dcm':    cls.fromDicom,
+                                 '.mag':    cls.fromDicom,
                                  '.mat':    cls.fromMatlab,
                                  '.pickle': cls.fromPickle,
                                  '.raw':    cls.fromBinary,
@@ -601,7 +612,7 @@ class BaseVolume:
             for dirpath, dirnames, filenames in os.walk(fname, followlinks=True):
                 print(dirpath)
                 for f in filenames:
-                    if isFileByExt(f, '.dcm'):
+                    if isFileByExt(f, '.dcm') or isFileByExt(f, '.mag'):
                         try:
                             vols.append(cls.fromDir(dirpath))
                             break
@@ -610,7 +621,7 @@ class BaseVolume:
                 if not recursive: break
             if len(vols) > 1: return vols
             elif len(vols)==1: return vols[0]
-            else: raise RuntimeError()
+            else: raise RuntimeError('Failed to load')
 
     @classmethod
     def fromArray(cls, array, frameofreference=None):
@@ -622,6 +633,8 @@ class BaseVolume:
         """
         # ensure array matches size in frameofreference
         self = cls()
+        if array.ndim == 2:
+            array = np.atleast_3d(array)
         if frameofreference is not None:
             self.data = array.reshape(frameofreference.size[::-1])
             self.frameofreference = frameofreference
@@ -1039,7 +1052,7 @@ class BaseVolume:
         new_vol.feature_label = self.feature_label
         return new_vol
 
-    def getSlice(self, idx, axis=0, flatten=False):
+    def getSlice(self, idx, axis=0,  flatten=False):
         """Extracts 2dArray of idx along the axis.
         Args:
             idx       -- idx identifying the slice along axis
@@ -1152,7 +1165,7 @@ class MaskableVolume(BaseVolume):
     def deepCopy(self):
         """makes deep copy of self and returns the copy"""
         copy_vol = MaskableVolume()
-        copy_vol.array = copy.deepcopy(self.data)
+        copy_vol.data = copy.deepcopy(self.data)
         copy_vol.frameofreference = copy.deepcopy(self.frameofreference)
         copy_vol.modality = self.modality
         copy_vol.feature_label = self.feature_label
@@ -1168,7 +1181,7 @@ class MaskableVolume(BaseVolume):
             MaskableVolume
         """
         # copy attributes
-        self.data = base.array
+        self.data = base.data
         self.frameofreference = copy.deepcopy(base.frameofreference)
         self.modality = base.modality
         self.feature_label = base.feature_label
@@ -1210,9 +1223,12 @@ class MaskableVolume(BaseVolume):
 
         # get equivalent array from densemaskarray
         if (roi is not None):
-            maskarray = roi.makeDenseMask(self.frameofreference).vectorize()
+            if isinstance(roi, ROI):
+                maskarray = roi.makeDenseMask(self.frameofreference)
+            elif isinstance(roi, BaseVolume):
+                maskarray = roi
             # apply mask
-            array = np.multiply(array, maskarray)
+            array = np.multiply(array, maskarray.vectorize())
 
         return array
 
@@ -1224,7 +1240,7 @@ class MaskableVolume(BaseVolume):
         """
         volume_copy = self.deepCopy()
         masked_array = self.vectorize(roi).reshape(self.frameofreference.size[::-1])
-        volume_copy.array = masked_array
+        volume_copy.data = masked_array
         return volume_copy
 
 
