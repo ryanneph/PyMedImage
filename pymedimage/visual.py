@@ -84,14 +84,15 @@ def tile(array_list, perrow, square=False, pad_width=5, pad_intensity=1000):
     # make concatenated rows
     rows_list = []
     this_row_array = None
-    for i in range(nimages):
-        if (i % perrow == 0 or i == nimages - 1):
+    for i in range(nimages+1):
+        if (i % perrow == 0):
             # add previous row to list
             if (i > 0):
                 rows_list.append(this_row_array)
                 this_row_array = None
             # start new row
-            this_row_array = array_list[i]
+            if i < nimages:
+                this_row_array = array_list[i]
         else:
             # add to row
             this_row_array = np.concatenate((this_row_array, array_list[i]), axis=1)
@@ -101,8 +102,7 @@ def tile(array_list, perrow, square=False, pad_width=5, pad_intensity=1000):
         if (row.shape != expect_row_shape):
             extra = np.zeros((expect_row_shape[0], expect_row_shape[1] - row.shape[1]))
             row = np.concatenate((row, extra), axis=1)
-            del rows_list[i]
-            rows_list.insert(i, row)
+            rows_list[i] = row
 
     # concatenate rows into matrix
     if (square):
@@ -119,35 +119,36 @@ def tile(array_list, perrow, square=False, pad_width=5, pad_intensity=1000):
         cols = expect_row_shape[1]
         # get area, then find side length that will work best
         area = rows * cols
-        pref_rows = int((math.sqrt(area) / expect_row_shape[0]))
+        pref_rows = math.ceil((math.sqrt(area) / expect_row_shape[0]))
         # pref_cols = int(area / (pref_rows * expect_row_shape[0]) / expect_row_shape[1]) + 1
 
         # construct matrix
         cols_list = []
         this_col_array = []
-        for i, row in enumerate(rows_list):
-            if (i % pref_rows == 0 or i == len(rows_list)-1):
-                if (i > 0):
+        for i in range(len(rows_list)+1):
+            if (i%pref_rows == 0) or i >= len(rows_list):
+                if (i>0):
                     # add previous column to list
                     cols_list.append(this_col_array)
-                    this_col_array = None
-                    # add padding column
+                    if i>= len(rows_list):
+                        break
+
                     if (pad > 0 and i < len(rows_list)-1):
+                        # add padding column
                         cols_list.append(pad_intensity * np.ones((pref_rows * expect_row_shape[0], pad)))
 
                 # start new column
-                this_col_array = row
+                this_col_array = rows_list[i]
             else:
                 # add to column
-                this_col_array = np.concatenate((this_col_array, row), axis=0)
+                this_col_array = np.concatenate((this_col_array, rows_list[i]), axis=0)
 
         # extend short cols with zeros
         for i, col in enumerate(cols_list):
             if (col.shape[0] != pref_rows * expect_row_shape[0]):
                 extra = np.zeros((expect_row_shape[0] * pref_rows - col.shape[0], expect_row_shape[1]))
                 row = np.concatenate((col, extra), axis=0)
-                del cols_list[i]
-                cols_list.insert(i, row)
+                cols_list[i] = row
 
         tiled_array = np.concatenate(cols_list, axis=1)
 
