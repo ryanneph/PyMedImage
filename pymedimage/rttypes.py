@@ -10,7 +10,7 @@ import warnings
 import math
 from math import ceil, floor
 import numpy as np
-import dicom  # pydicom
+import pydicom  # pydicom
 import nibabel as nib
 import pickle
 import scipy.io  # savemat -> save to .mat
@@ -20,7 +20,7 @@ import copy
 import warnings
 from PIL import Image, ImageDraw
 from scipy.ndimage import interpolation
-from . import dcmio, misc
+from . import dcmio, misc, volio
 from .misc import ensure_extension
 from .fileio.strutils import getFileType, isFileByExt
 
@@ -521,6 +521,7 @@ class BaseVolume:
         self.frameofreference = None
         self.modality = None
         self.feature_label = None
+        self.valid_exts = set()
 
     def __repr__(self):
         return '{!s}:\n'.format(self.__class__) + \
@@ -553,33 +554,17 @@ class BaseVolume:
         warnings.warn('use of BaseVolume.array property is deprecated. use BaseVolume.data instead')
         self.data = v
 
+    @property
+    def frame(self):
+        return self.frameofreference
+
+    @frame.setter
+    def frame(self, v):
+        self.frameofreference = v
+
     def astype(self, type):
         self.data = self.data.astype(type)
         return self
-
-    # CONSTRUCTOR METHODS
-    #  @staticmethod
-    #  def _getAttrMap():
-    #      return {
-    #          'arraydata': 'array',
-    #          'size': 'FrameOfReference.size',
-    #          'start': 'FrameOfReference.start',
-    #          'spacing': 'FrameOfReference.spacing',
-    #          'for_uid': 'FrameOfReference.uid',
-    #          'modality': 'modality',
-    #          'feature_label': 'feature_label',
-    #          'order': 'ZYX'
-    #      }
-
-    #  @classmethod
-    #  def _fromDataDict(cls, datadict):
-    #      """constructor helper that standardized construction from different filetypes using a common mapping
-    #      """
-    #      self = cls() # instantiate
-    #      invertattrs = (datadict.pop('order', default='ZYX') == 'ZYX')
-    #      attrmap = BaseVolume._getAttrMap()
-    #      for k, v in datadict.items():
-    #          self.__setattr__(attrmap[k], v)
 
     def _getDataDict(self):
         xstr = misc.xstr  # shorter call-name for use in function
@@ -603,6 +588,10 @@ class BaseVolume:
                                  '.mat':    cls.fromMatlab,
                                  '.pickle': cls.fromPickle,
                                  '.raw':    cls.fromBinary,
+                                 '.png':    cls.fromImage,
+                                 '.jpg':    cls.fromImage,
+                                 '.jpeg':   cls.fromImage,
+                                 None:        cls.fromBinary,
                                  '.h5':     cls.fromHDF5}
             return constructorByType[getFileType(fname)](fname)
         elif os.path.isdir(fname):
@@ -645,6 +634,72 @@ class BaseVolume:
         return self
 
     @classmethod
+    def fromImage(cls, fname, frameofreference=None, normalize=True):
+        with open(fname, 'rb') as fd:
+            im = Image.open(fd, 'r')
+            if im.mode in ['1', 'L', 'P']:
+                dim = 1
+                if im.mode=='P':
+                    im = im.convert('L')
+            elif im.mode in ['RGB', 'YCbCr']:
+                dim = 3
+            elif im.mode in ['RGBA', 'CMYK']:
+                dim = 4
+            else:
+                raise RuntimeError("Couldn't determine dimensionality of image with mode=\"{!s}\"".format(im.mode))
+            maxint = 255 # assume all 8-bit per channel
+            arr = np.asarray(im).transpose([2,0,1])
+            if normalize:
+                # normalize to [0,1]
+                arr = arr.astype('float32')
+                arr /= maxint
+
+        #  def plotChannels(arr):
+            import matplotlib.pyplot as plt
+            fig = plt.figure(figsize=(9,3))
+            titles = ['red', 'green', 'blue']
+            for i in range(arr.shape[0]):
+                ax = fig.add_subplot(1,3,i+1)
+                ax.imshow(arr[i,:,:], cmap="Greys")
+                ax.axes.xaxis.set_visible(False)
+                ax.axes.yaxis.set_visible(False)
+                ax.set_title(titles[i])
+            plt.show()
+
+            if frameofreference is None:
+                frame = FrameOfReference((0,0,0), (1,1,1), arr.shape)
+            return cls.fromArray(arr, frame)
+
+    def toImage(self, fname, mode='L', resize=None, cmap='Set3'):
+        array = self.data
+        array = np.squeeze(array)
+        if array.ndim != 2:
+            raise RuntimeError('Saving image with ndim={} is not supported'.format(array.ndim))
+
+        if mode in ['RGB', 'RGBA']:
+            # convert integer class ids to rgb colors according to cmap
+            rng = abs(np.max(array)-np.min(array))
+            if rng == 0: rng = 1
+            normarray = (array - np.min(array)) / rng
+            im = Image.fromarray(np.uint8(plt.cm.get_cmap(cmap)(normarray)*255))
+        elif mode in ['P']:
+            # separates gray values so they can be distinguished
+            array*=math.floor((255 / len(np.unique(array))))
+            im = Image.fromarray(array.astype('uint8'))
+        elif mode in ['1', 'L', 'P']:
+            im = Image.fromarray(array.astype('uint8'))
+        else: raise RuntimeError
+
+        # restore image to original dims
+        if isinstance(resize, numbers.Number) and resize>0 and not resize==1:
+            im = im.resize( [int(resize*s) for s in im.size], resample=Image.NEAREST)
+
+        fname = ensure_extension(fname, '.png')
+        im.save(fname)
+        logger.debug('file saved to {}'.format(fname))
+
+
+    @classmethod
     def fromDir(cls, path, recursive=False):
         """constructor: takes path to directory containing dicom files and builds a sorted array
 
@@ -668,7 +723,7 @@ class BaseVolume:
             path (str): path to .raw file in binary format
             frameofreference (FOR): most importantly defines mapping from 1d to 3d array
         """
-        if not os.path.isfile(path) or os.path.splitext(path)[1].lower() not in ['.raw', '.bin']:
+        if not os.path.isfile(path) or os.path.splitext(path)[1].lower() not in ['.raw', '.bin', None, '']:
             raise Exception('data is not formatted properly. must be one of [.raw, .bin]')
 
         if not isinstance(frameofreference, FrameOfReference):
@@ -680,12 +735,21 @@ class BaseVolume:
             flat = f.read()
         _shape = frameofreference.size[::-1]
         _expected_n = np.product(_shape)
-        _n = int(os.path.getsize(path)/struct.calcsize('f'))
-        if _n != _expected_n:
-            raise Exception('filesize ({:f}) doesn\'t match expected ({:f}) size'.format(
-                os.path.getsize((path)), struct.calcsize('f')*_expected_n
+        thetype = None
+        for type in ['f', 'd']:
+            _n = int(os.path.getsize(path)/struct.calcsize(type))
+            if _n != _expected_n:
+                logger.debug('filesize ({:f}) doesn\'t match expected ({:f}) size'.format(
+                    os.path.getsize((path)), struct.calcsize(type)*_expected_n
+                ))
+            else:
+                thetype = type
+                break
+        if thetype is None:
+            raise RuntimeError("filesize ({:f}) doesn't match expected size ({:f})".format(
+                    os.path.getsize((path)), struct.calcsize('f')*_expected_n
             ))
-        s = struct.unpack('f'*_n, flat)
+        s = struct.unpack(thetype*_n, flat)
         vol = np.array(s).reshape(_shape)
         #  vol[vol>1e10] = 0
         #  vol[vol<-1e10] = 0
@@ -696,9 +760,10 @@ class BaseVolume:
         return cls.fromDatasetList([dcmio.read_dicom(fname)])
 
     def toDicom(self, dname, fprefix=''):
-        SeriesInstanceUID   = dicom.UID.generate_uid()
-        StudyInstanceUID    = dicom.UID.generate_uid()
-        FrameOfReferenceUID = dicom.UID.generate_uid()
+        SeriesInstanceUID   = pydicom.uid.generate_uid()
+        StudyInstanceUID    = pydicom.uid.generate_uid()
+        FrameOfReferenceUID = pydicom.uid.generate_uid()
+        min_val = np.min(self.data)
         for i in range(self.frameofreference.size[2]):
             ds = dcmio.make_dicom_boilerplate(SeriesInstanceUID, StudyInstanceUID, FrameOfReferenceUID)
             ds.SliceThickness = self.frameofreference.spacing[2]
@@ -710,9 +775,9 @@ class BaseVolume:
             ds.AcquisitionNumber = i+1
             ds.Modality = self.modality if self.modality is not None else ''
             ds.DerivationDescription = self.feature_label if self.feature_label is not None else ''
-            ds.PixelData = (self.data[i, :, :].flatten().astype(np.uint16)+1000).tostring()
+            ds.PixelData = ((self.data[i, :, :]-min_val).flatten().astype(np.uint16)).tostring()
             ds.RescaleSlope = 1.0
-            ds.RescaleIntercept = -1000.0
+            ds.RescaleIntercept = floor(min_val)
             ds.PixelRepresentation = 0 # unsigned integers
             os.makedirs(dname, exist_ok=True)
             ds.save_as(os.path.join(dname, '{}{:04d}.dcm'.format(fprefix, i)))
@@ -730,7 +795,7 @@ class BaseVolume:
         # check that all elements are valid slices, if not remove and continue
         nRemoved = 0
         for i, slice in enumerate(dataset_list):
-            if (not isinstance(slice, dicom.dataset.Dataset)):
+            if (not isinstance(slice, pydicom.dataset.Dataset)):
                 logger.debug('invalid type ({t:s}) at idx {i:d}. removing.'.format(
                     t=str(type(slice)),
                     i=i ) )
@@ -768,10 +833,10 @@ class BaseVolume:
         # construct 3dArray
         array_list = []
         for dataset in dataset_list:
-            array = dataset.pixel_array
+            array = dataset.pixel_array.astype(np.int16)
             factor = dataset.RescaleSlope
             offset = dataset.RescaleIntercept
-            array = np.add(np.multiply(array, factor), offset)
+            array = array * factor + offset
             array = array.reshape((1, array.shape[0], array.shape[1]))
             array_list.append(array)
 

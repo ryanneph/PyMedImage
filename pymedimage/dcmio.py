@@ -10,8 +10,8 @@ import sys
 import logging
 import warnings
 from datetime import datetime
-import dicom
-import dicom.dataset
+import pydicom
+import pydicom.dataset
 from string import Template
 from .misc import indent, g_indents, ensure_extension
 
@@ -24,11 +24,15 @@ MRIMAGE_SOP_CLASS_UID = "1.2.840.10008.5.1.4.1.1.4"
 
 def make_dicom_boilerplate(SeriesInstanceUID=None, StudyInstanceUID=None, FrameOfReferenceUID=None):
     # Populate required values for file meta information
-    file_meta = dicom.dataset.Dataset()
+    file_meta = pydicom.dataset.Dataset()
+    file_meta.FileMetaInformationGroupLength = 204
+    file_meta.FileMetaInformationVersion = b'00\01'
     file_meta.MediaStorageSOPClassUID = CTIMAGE_SOP_CLASS_UID
-    file_meta.MediaStorageSOPInstanceUID = dicom.UID.generate_uid()
-    file_meta.ImplementationClassUID = dicom.UID.generate_uid()
-    ds = dicom.dataset.Dataset()
+    file_meta.MediaStorageSOPInstanceUID = pydicom.uid.generate_uid()
+    file_meta.ImplementationClassUID = '2.25.229451600072090404564844894284998027179' #arbitrary specific to this library
+    file_meta.ImplementationVersionName = "PyMedImage"
+    file_meta.TransferSyntaxUID = pydicom.uid.ImplicitVRLittleEndian
+    ds = pydicom.dataset.Dataset()
     ds.preamble = b"\0" * 128
     ds.file_meta = file_meta
     ds.is_little_endian = True
@@ -56,11 +60,11 @@ def make_dicom_boilerplate(SeriesInstanceUID=None, StudyInstanceUID=None, FrameO
     ds.ImagePositionPatient = [0, 0, 0]
     ds.ImageOrientationPatient = [1, 0, 0, 0, 1, 0]
     ds.InstanceNumber = 1
-    ds.StudyInstanceUID = dicom.UID.generate_uid() if StudyInstanceUID is None else StudyInstanceUID
-    ds.SeriesInstanceUID = dicom.UID.generate_uid() if SeriesInstanceUID is None else SeriesInstanceUID
-    ds.FrameOfReferenceUID = dicom.UID.generate_uid() if FrameOfReferenceUID is None else FrameOfReferenceUID
-    ds.SOPInstanceUID = dicom.UID.generate_uid()
-    ds.ImageType = ['DERIVED', 'PRIMARY', 'AXIAL']
+    ds.StudyInstanceUID = pydicom.uid.generate_uid() if StudyInstanceUID is None else StudyInstanceUID
+    ds.SeriesInstanceUID = pydicom.uid.generate_uid() if SeriesInstanceUID is None else SeriesInstanceUID
+    ds.FrameOfReferenceUID = pydicom.uid.generate_uid() if FrameOfReferenceUID is None else FrameOfReferenceUID
+    ds.SOPInstanceUID = pydicom.uid.generate_uid()
+    ds.ImageType = ['ORIGINAL', 'PRIMARY', 'AXIAL']
     ds.Modality = ''
     ds.SOPClassUID = CTIMAGE_SOP_CLASS_UID
     ds.SamplesPerPixel = 1
@@ -85,17 +89,17 @@ def make_dicom_boilerplate(SeriesInstanceUID=None, StudyInstanceUID=None, FrameO
 def write_dicom(path, dataset):
     """write a pydicom dataset to dicom file"""
     ensure_extension(path, '.dcm')
-    dicom.write_file(path, dataset)
+    pydicom.dcmwrite(path, dataset, write_like_original=False)
 
 def read_dicom(path):
     """read a dicom slice using pydicom and return the dataset object"""
     if (not os.path.exists(path)):
         raise FileNotFoundError('file at {!s} does not exist'.format(path))
     try:
-        ds = dicom.read_file(path)
-    except dicom.errors.InvalidDicomError as e:
-        warnings.warn('dicom.read_dicom() failed with error: "{!s}". Trying again with force=True'.format(e))
-        ds = dicom.read_file(path, force=True)
+        ds = pydicom.read_file(path)
+    except pydicom.errors.InvalidDicomError as e:
+        warnings.warn('pydicom.read_dicom() failed with error: "{!s}". Trying again with force=True'.format(e))
+        ds = pydicom.read_file(path, force=True)
     return ds
 
 def read_dicom_dir(path, recursive=False, verbosity=0):
@@ -123,7 +127,7 @@ def read_dicom_dir(path, recursive=False, verbosity=0):
             # build the list of valid dicom file paths then load them after walk
             for file in files:
                 _, file_extension = os.path.splitext(file)
-                if file_extension in ['.dcm', '.dicom']:
+                if file_extension in ['.dcm', '.dicom', '.mag']:
                     dicom_paths.append(root + '/' + file)
             if (not recursive):
                 # clear dirs so that walk stops after this level
@@ -173,7 +177,7 @@ def probeDicomProperties(root, prop_label_list, recursive=True, silent=False):
                     for l, s in sets.items():
                         #print(l)
                         val = ds.get(l)
-                        if isinstance(val, dicom.multival.MultiValue):
+                        if isinstance(val, pydicom.multival.MultiValue):
                             val = tuple(val)
                         #print(type(val))
                         s.add(val)

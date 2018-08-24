@@ -17,7 +17,7 @@ pycuda.compiler.DEFAULT_NVCC_FLAGS = ['--std=c++11']
 # import matplotlib.pyplot as plt
 
 # set default nvidia device number
-NVDEVICE = 1
+NVDEVICE = 0
 
 # initialize module logger
 logger = logging.getLogger(__name__)
