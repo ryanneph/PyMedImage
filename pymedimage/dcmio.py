@@ -22,6 +22,89 @@ RTIMAGE_SOP_CLASS_UID = "1.2.840.10008.5.1.4.1.1.481.1"
 CTIMAGE_SOP_CLASS_UID = "1.2.840.10008.5.1.4.1.1.2"
 MRIMAGE_SOP_CLASS_UID = "1.2.840.10008.5.1.4.1.1.4"
 
+def get_roi_contour_module(ds):
+    ds.ROIContourSequence = []
+    return ds
+
+def add_roi_to_roi_contour(ds, roi, contours, ref_images):
+    newroi = pypydicom.dataset.Dataset()
+    ds.ROIContourSequence.append(newroi)
+    newroi.ReferencedROINumber = roi.ROINumber
+    newroi.ROIDisplayColor = roicolors[(roi.ROINumber-1) % len(roicolors)]
+    newroi.ContourSequence = []
+    for i, contour in enumerate(contours, 1):
+        c = pydicom.dataset.Dataset()
+        newroi.ContourSequence.append(c)
+        c.ContourNumber = i
+        c.ContourGeometricType = 'CLOSED_PLANAR'
+        # c.AttachedContours = [] # T3
+        if ref_images != None:
+            c.ContourImageSequence = [] # T3
+            for image in ref_images:
+                if image.ImagePositionPatient[2] == contour[0,2]:
+                    imgref = pydicom.dataset.Dataset()
+                    imgref.ReferencedSOPInstanceUID = image.SOPInstanceUID
+                    imgref.ReferencedSOPClassUID = image.SOPClassUID
+                    # imgref.ReferencedFrameNumber = "" # T1C on multiframe
+                    # imgref.ReferencedSegmentNumber = "" # T1C on segmentation
+                    c.ContourImageSequence.append(imgref)
+        # c.ContourSlabThickness = "" # T3
+        # c.ContourOffsetVector = [0,0,0] # T3
+        c.NumberofContourPoints = len(contour)
+        c.ContourData = "\\".join(["%g" % x for x in contour.ravel().tolist()])
+    return newroi
+
+
+roicolors = [[255,0,0],
+             [0,255,0],
+             [0,0,255],
+             [255,255,0],
+             [0,255,255],
+             [255,0,255],
+             [255,127,0],
+             [127,255,0],
+             [0,255,127],
+             [0,127,255],
+             [127,0,255],
+             [255,0,127],
+             [255,127,127],
+             [127,255,127],
+             [127,127,255],
+             [255,255,127],
+             [255,127,255],
+             [127,255,255]]
+
+def get_structure_set_module(ds, DT, TM, ref_images, current_study):
+    ds.StructureSetLabel = "Structure Set" # T1
+    # ds.StructureSetName = "" # T3
+    # ds.StructureSetDescription = "" # T3
+    # ds.InstanceNumber = "" # T3
+    ds.StructureSetDate = DT # T2
+    ds.StructureSetTime = TM # T2
+    if ref_images != None and len(ref_images) > 0:
+        reffor = pydicom.dataset.Dataset()
+        reffor.FrameofReferenceUID = get_current_study_uid('FrameofReferenceUID', current_study)
+        refstudy = pydicom.dataset.Dataset()
+        refstudy.ReferencedSOPClassUID = get_uid("Detached Study Management SOP Class") # T1, but completely bogus.
+        refstudy.ReferencedSOPInstanceUID = get_current_study_uid('StudyUID', current_study) # T1
+        assert len(set(x.SeriesInstanceUID for x in ref_images)) == 1
+        refseries = pydicom.dataset.Dataset()
+        refseries.SeriesInstanceUID = ref_images[0].SeriesInstanceUID
+        refseries.ContourImageSequence = [] # T3
+        for image in ref_images:
+            imgref = pydicom.dataset.Dataset()
+            imgref.ReferencedSOPInstanceUID = image.SOPInstanceUID
+            imgref.ReferencedSOPClassUID = image.SOPClassUID
+            # imgref.ReferencedFrameNumber = "" # T1C on multiframe
+            # imgref.ReferencedSegmentNumber = "" # T1C on segmentation
+            refseries.ContourImageSequence.append(imgref)
+        refstudy.RTReferencedSeriesSequence = [refseries]
+        reffor.RTReferencedStudySequence = [refstudy]
+        ds.ReferencedFrameOfReferenceSequence = [reffor] # T3
+    ds.StructureSetROISequence = []
+
+    return ds
+
 def make_dicom_boilerplate(SeriesInstanceUID=None, StudyInstanceUID=None, FrameOfReferenceUID=None):
     # Populate required values for file meta information
     file_meta = pydicom.dataset.Dataset()
@@ -91,18 +174,18 @@ def write_dicom(path, dataset):
     ensure_extension(path, '.dcm')
     pydicom.dcmwrite(path, dataset, write_like_original=False)
 
-def read_dicom(path):
+def read_dicom(path, only_header=False):
     """read a dicom slice using pydicom and return the dataset object"""
     if (not os.path.exists(path)):
         raise FileNotFoundError('file at {!s} does not exist'.format(path))
     try:
-        ds = pydicom.read_file(path)
+        ds = pydicom.dcmread(path, stop_before_pixels=only_header)
     except pydicom.errors.InvalidDicomError as e:
         warnings.warn('pydicom.read_dicom() failed with error: "{!s}". Trying again with force=True'.format(e))
-        ds = pydicom.read_file(path, force=True)
+        ds = pydicom.dcmread(path, stop_before_pixels=only_header, force=True)
     return ds
 
-def read_dicom_dir(path, recursive=False, verbosity=0):
+def read_dicom_dir(path, recursive=False, only_headers=False, verbosity=0):
     """read all dicom files in directory and return a list of the dataset objects.
 
     Keyword arguments:
@@ -146,7 +229,7 @@ def read_dicom_dir(path, recursive=False, verbosity=0):
 
         if (len(dicom_paths)>0):
             for file in dicom_paths:
-                file_dataset = read_dicom(file)
+                file_dataset = read_dicom(file, only_header=only_headers)
                 if file_dataset is not None:
                     ds_list.append(file_dataset)
             return ds_list

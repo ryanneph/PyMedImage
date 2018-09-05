@@ -10,17 +10,14 @@ import warnings
 import math
 from math import ceil, floor
 import numpy as np
-import pydicom  # pydicom
-import nibabel as nib
 import pickle
-import scipy.io  # savemat -> save to .mat
-import h5py
 import struct
 import copy
 import warnings
 from PIL import Image, ImageDraw
 from scipy.ndimage import interpolation
-from . import dcmio, misc, volio
+
+from . import dcmio, misc
 from .misc import ensure_extension
 from .fileio.strutils import getFileType, isFileByExt
 
@@ -50,6 +47,47 @@ class FrameOfReference:
         self.spacing = spacing
         self.size = size
         self.UID = UID
+
+    @classmethod
+    def fromDatasetList(cls, dataset_list):
+        import pydicom  # pydicom
+
+        # check that all elements are valid slices, if not remove and continue
+        nRemoved = 0
+        for i, slice in enumerate(dataset_list):
+            if (not isinstance(slice, pydicom.dataset.Dataset)):
+                logger.debug('invalid type ({t:s}) at idx {i:d}. removing.'.format(
+                    t=str(type(slice)),
+                    i=i ) )
+                dataset_list.remove(slice)
+                nRemoved += 1
+            elif (len(slice.dir('ImagePositionPatient')) == 0):
+                logger.debug('invalid .dcm image at idx {:d}. removing.'.format(i))
+                dataset_list.remove(slice)
+                nRemoved += 1
+        if (nRemoved > 0):
+            logger.info('# slices removed with invalid types: {:d}'.format(nRemoved))
+
+        # sort datasets by increasing slicePosition (inferior -> superior)
+        dataset_list.sort(key=lambda dataset: dataset.ImagePositionPatient[2], reverse=False)
+
+        # build object properties
+        start = dataset_list[0].ImagePositionPatient
+        spacing = (*dataset_list[0].PixelSpacing, dataset_list[0].SliceThickness)
+        try:
+            # some modalities don't provide NumberOfSlices attribute
+            size = (dataset_list[0].Columns, dataset_list[0].Rows, dataset_list[0].NumberOfSlices)
+        except:
+            # use length of list instead
+            size = (dataset_list[0].Columns, dataset_list[0].Rows, len(dataset_list))
+
+        UID = dataset_list[0].FrameOfReferenceUID
+        return cls(start, spacing, size, UID)
+
+    @classmethod
+    def fromDir(cls, path, recursive=False):
+        dataset_list = dcmio.read_dicom_dir(path, recursive=recursive, only_headers=True)
+        return cls.fromDatasetList(dataset_list)
 
     def copy(self):
         new = FrameOfReference()
@@ -189,6 +227,28 @@ class ROI:
 
             # create frameofreference based on the extents of the roi and apparent spacing
             self.frameofreference = self.getROIExtents()
+
+    @classmethod
+    def roiFromFile(cls, rtstruct_path, name):
+        ds = cls._loadRtstructDicom(rtstruct_path)
+        if (ds is not None):
+            # get structuresetROI sequence
+            StructureSetROI_list = ds.StructureSetROISequence
+            nContours = len(StructureSetROI_list)
+            if (nContours <= 0):
+                logger.exception('no contours were found')
+
+            roi = None
+            for StructureSetROI in StructureSetROI_list:
+                if StructureSetROI.ROIName == name:
+                    ROIContour = None
+                    for ROIContour in ds.ROIContourSequence:
+                        if ROIContour.ReferencedROINumber == StructureSetROI.ROINumber:
+                            return cls(ROIContour, StructureSetROI)
+            return None
+
+        else:
+            logger.exception('no dataset was found')
 
     @classmethod
     def collectionFromFile(cls, rtstruct_path, keep_empty=False):
@@ -465,6 +525,7 @@ class ROI:
 
     def toHDF5(self, path):
         """serialize object to file in h5 format"""
+        import h5py
         path = ensure_extension(path, '.h5')
         with h5py.File(path, 'w') as f:
             # store attributes
@@ -486,6 +547,7 @@ class ROI:
     @classmethod
     def fromHDF5(cls, path):
         """reconstruct object from serialized data in h5 format"""
+        import h5py
         self = cls()
         path = ensure_extension(path, '.h5')
         with h5py.File(path, 'r') as f:
@@ -760,6 +822,7 @@ class BaseVolume:
         return cls.fromDatasetList([dcmio.read_dicom(fname)])
 
     def toDicom(self, dname, fprefix=''):
+        import pydicom  # pydicom
         SeriesInstanceUID   = pydicom.uid.generate_uid()
         StudyInstanceUID    = pydicom.uid.generate_uid()
         FrameOfReferenceUID = pydicom.uid.generate_uid()
@@ -788,6 +851,7 @@ class BaseVolume:
         Args:
             slices
         """
+        import pydicom  # pydicom
         self = cls()
         if (dataset_list is None):
             raise ValueError('no valid dataset_list provided')
@@ -895,8 +959,8 @@ class BaseVolume:
 
     @classmethod
     def fromMatlab(cls, path):
-        """restore BaseVolume from .mat file that was created using BaseVolume.toMatlab()
-        """
+        """restore BaseVolume from .mat file that was created using BaseVolume.toMatlab() """
+        import scipy.io  # savemat -> save to .mat
         path = ensure_extension(path, '.mat')
         extract_str = misc.numpy_safe_string_from_array
         data = scipy.io.loadmat(path, appendmat=True)
@@ -933,6 +997,7 @@ class BaseVolume:
         Optional Args:
             compress (bool): compress dataarray at the cost of write speed
         """
+        import scipy.io  # savemat -> save to .mat
         # first represent as dictionary for savemat()
         data = self._getDataDict()
         data['order'] = 'ZYX'
@@ -944,6 +1009,7 @@ class BaseVolume:
 
     def toHDF5(self, path, compress=False):
         """store object to hdf5 file with image data stored as dataset and metadata as attributes"""
+        import h5py
         data = self._getDataDict()
         arraydata = data.pop('arraydata')
         path = ensure_extension(path, '.h5')
@@ -955,6 +1021,7 @@ class BaseVolume:
 
     def _fromDoseH5(self, path):
         """load from dosecalc defined h5 file"""
+        import h5py
         with h5py.File(path, 'r') as f:
             ad = f['dose']
             self.data = np.empty(ad.shape)
@@ -969,6 +1036,7 @@ class BaseVolume:
 
     def _fromH5(self, path):
         """load from pymedimage defined h5 file"""
+        import h5py
         extract_str = misc.numpy_safe_string_from_array
         with h5py.File(path, 'r') as f:
             ad = f['arraydata']
@@ -1018,6 +1086,7 @@ class BaseVolume:
             im.save(fname)
 
     def toNII(self, fname, affine=None):
+        import nibabel as nib
         if affine is None:
             logger.warning('No information about global coordinate system provided')
             affine = np.diag([1,1,1,1])
@@ -1029,6 +1098,7 @@ class BaseVolume:
 
     @classmethod
     def fromNII(cls, fname):
+        import nibabel as nib
         img = nib.load(fname)
         h = img.header
         # TODO: add support for non-axially oriented slices (with affine view transformation)
