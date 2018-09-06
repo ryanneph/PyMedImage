@@ -21,5 +21,25 @@ PyMedImage will be updated periodically when time permits to become more functio
 3. Incorporation of more specific research oriented operations that can be chained together into a processing pipeline.
 4. Examples and Getting Started Guide
 
+## Installing
+Open a terminal window and enter:
+``` bash
+pip3 install git+git://github.com/ryanneph/PyMedImage.git#egg=PyMedImage
+```
+
+## Updating
+Open a terminal window and enter:
+``` bash
+pip3 install --upgrade git+git://github.com/ryanneph/PyMedImage.git#egg=PyMedImage
+```
+
+## Development
+Open a terminal window and enter:
+``` bash
+git clone https://github.com/ryanneph/PyMedImage.git
+cd PyMedImage
+pip3 install -e .
+```
+
 ## Contributing
 If you'd like to get involved in contributing to this project, contact Ryan Neph at neph320@gmail.com.
