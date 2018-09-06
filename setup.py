@@ -11,5 +11,10 @@ setup(name='PyMedImage',
       url='https://github.com/ryanneph/pymedimage',
       packages=find_packages(),
       install_requires=[
+          'scipy',
+          'h5py',
+          'numpy',
+          'pydicom',
+          'pillow',
       ]
       )
