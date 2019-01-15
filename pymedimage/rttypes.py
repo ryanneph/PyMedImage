@@ -5,6 +5,7 @@ Datatypes for general dicom processing including masking, rescaling, and fusion
 
 import sys
 import os
+import pdb
 import logging
 import warnings
 import math
@@ -225,11 +226,11 @@ class ROI:
             # sort by slice position in ascending order (inferior -> superior)
             self.coordslices.sort(key=lambda coordslice: coordslice[0][2], reverse=False)
 
-            # create frameofreference based on the extents of the roi and apparent spacing
-            self.frameofreference = self.getROIExtents()
+            #  # create frameofreference based on the extents of the roi and apparent spacing
+            #  self.frameofreference = self.getROIExtents()
 
     @classmethod
-    def roiFromFile(cls, rtstruct_path, name):
+    def roiFromFile(cls, rtstruct_path, name, casesensitive=True):
         ds = cls._loadRtstructDicom(rtstruct_path)
         if (ds is not None):
             # get structuresetROI sequence
@@ -238,9 +239,8 @@ class ROI:
             if (nContours <= 0):
                 logger.exception('no contours were found')
 
-            roi = None
             for StructureSetROI in StructureSetROI_list:
-                if StructureSetROI.ROIName == name:
+                if (casesensitive and StructureSetROI.ROIName == name) or (not casesensitive and str(StructureSetROI.ROIName).lower() == name.lower()):
                     ROIContour = None
                     for ROIContour in ds.ROIContourSequence:
                         if ROIContour.ReferencedROINumber == StructureSetROI.ROINumber:
@@ -343,7 +343,7 @@ class ROI:
         minerror = 5000
         coordslice = None
         ### REVISIT THE CORRECT SETTING OF TOLERANCE TODO
-        tolerance = self.frameofreference.spacing[2]*0.95 - 1e-9  # if upsampling too much then throw error
+        tolerance = frameofreference.spacing[2]*0.95 - 1e-9  # if upsampling too much then throw error
         for slice in self.coordslices:
             # for each list of coordinate tuples - check the slice for distance from position
             error = abs(position - slice[0][2])
@@ -432,7 +432,7 @@ class ROI:
             self.__cache_densemask = densemask
             return densemask
 
-    def getROIExtents(self):
+    def getROIExtents(self, spacing=None):
         """Creates a tightly bound frame of reference around the ROI which allows visualization in a cropped
         frame
         """
@@ -463,7 +463,12 @@ class ROI:
             logger.debug('estimated z_spacing: {:0.3f}'.format(min_z_space))
 
         # arbitrarily set spacing
-        spacing = (1, 1, min_z_space)
+        if spacing is None:
+            spacing = (1, 1, min_z_space)
+            warnings.warn('Inferred spacing is deprecated in favor of manual specification. Please change code immediately to ensure correctness', DeprecationWarning)
+        else:
+            if min_z_space != spacing[2]:
+                warnings.warn('Inferred slice thickness from rtstruct ({0:g}) not equal to user specified ({:g}). Using user specification ({1:g})'.format(min_z_space, spacing[2]))
 
         # get start and end of roi volume extents
         global_limits = {'xmax': -5000,
@@ -657,11 +662,9 @@ class BaseVolume:
                                  '.h5':     cls.fromHDF5}
             return constructorByType[getFileType(fname)](fname)
         elif os.path.isdir(fname):
-            print('loading from dir')
             vols = []
             # collect all full paths to dirs containing medical image files
             for dirpath, dirnames, filenames in os.walk(fname, followlinks=True):
-                print(dirpath)
                 for f in filenames:
                     if isFileByExt(f, '.dcm') or isFileByExt(f, '.mag'):
                         try:

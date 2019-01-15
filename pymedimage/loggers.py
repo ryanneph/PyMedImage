@@ -9,6 +9,29 @@ import logging.handlers
 # capture warnings and emit logging.warning() message
 logging.captureWarnings(True)
 
+def File(logpath, logname, errorlogname=None,loggername='/test'):
+    logname = os.path.splitext(logname)[0]
+    logfile_path = os.path.join(logpath, logname + '.log')
+    logger = logging.getLogger(loggername)
+    logger.setLevel(logging.INFO)
+
+    os.makedirs(logpath, exist_ok=True)
+
+    fh = logging.FileHandler(logfile_path, mode='a')
+    logger.addHandler(fh)
+
+    if not errorlogname:
+        errorlogname = logname + '_Errors'
+    else:
+        errorlogname = os.path.splitext(errorlogname)[0]
+    errlogfile_path = os.path.join(logpath, errorlogname + '.log')
+    err_fh = logging.FileHandler(errlogfile_path, mode='a')
+    err_fh.setLevel(logging.ERROR)
+    logger.addHandler(err_fh)
+
+    return logger
+
+
 def RotatingFile(logpath, logname, errorlogname=None):
     """initialize and return standard logger and error logger objects
 
@@ -19,7 +42,7 @@ def RotatingFile(logpath, logname, errorlogname=None):
     logname = os.path.splitext(logname)[0]
     logfile_path = os.path.join(logpath, logname + '.log')#.format(time.strftime('%Y%b%d_%H:%M:%S')))
     # get a named logger - if not named, root will get messages from children loggers
-    logger = logging.getLogger()
+    logger = logging.getLogger('arbitrary')
     logger.setLevel(logging.INFO)
 
     # create common formatter
