@@ -1,5 +1,13 @@
+## \*\*PROJECT RELOCATION\*\*
+I have moved the most popular functionality of this library (namely the image load/save, and RTStruct mask load/mask-generation functions) to a more actively maintained repository: [RTTypes](https://github.com/ryanneph/rttypes)
+
+For continued availability of the feature calculation framework, you may continue to use this library, though maintainence will be less frequent.
+
+---
+
 # PyMedImage
-This is a library written in Python 3.x and CUDA for common tasks when dealing with the DICOM medical image format in a research setting. 
+This is a library written in Python 3.x and CUDA for common tasks when dealing with the DICOM medical image format in a research setting.
+
 ## Overview
 Key features include:
 * Easy I/O of dicom images/volumes commonly used in storage of CT, MR, and PET images.
@@ -13,13 +21,6 @@ Key features include:
 * GPU-Acceleration and Multi-process management
 * Customizable Logging Utilities
 * Image-feature-based voxel clustering
-
-## Upcoming Changes/Enhancements
-PyMedImage will be updated periodically when time permits to become more functional and robust. Please stay tuned.
-1. Unit Tests
-2. Documentation Page
-3. Incorporation of more specific research oriented operations that can be chained together into a processing pipeline.
-4. Examples and Getting Started Guide
 
 ## Installing
 Open a terminal window and enter:
@@ -40,6 +41,3 @@ git clone https://github.com/ryanneph/PyMedImage.git
 cd PyMedImage
 pip3 install -e .
 ```
-
-## Contributing
-If you'd like to get involved in contributing to this project, contact Ryan Neph at neph320@gmail.com.
